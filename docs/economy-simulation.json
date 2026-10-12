@@ -1,0 +1,125 @@
+{
+  "assumptions": "first 30 minutes active, then 10 minutes/hour; deterministic salvage; capacity respected; no trading, upgrade or config overrides",
+  "results": [
+    {
+      "hours": 0.5,
+      "level": 7,
+      "coins": 5777,
+      "xp": 3955,
+      "orders": 154,
+      "capacity": 160,
+      "stored": 145,
+      "stock": {
+        "wood": 2,
+        "plastic": 1,
+        "metal": 35,
+        "seaweed": 51,
+        "water": 52,
+        "fish": 0,
+        "plank": 4,
+        "parts": 0
+      },
+      "buildings": [
+        "purifier",
+        "fishnet",
+        "dock",
+        "workshop",
+        "garden",
+        "cabin",
+        "warehouse"
+      ],
+      "blockedSalvage": 16,
+      "milestonesSeconds": {
+        "firstSalvage": 0,
+        "build:purifier": 0,
+        "build:fishnet": 0,
+        "build:dock": 0,
+        "firstOrder": 0,
+        "build:workshop": 90,
+        "build:garden": 320,
+        "build:cabin": 410,
+        "build:warehouse": 620
+      }
+    },
+    {
+      "hours": 2,
+      "level": 7,
+      "coins": 8350,
+      "xp": 5760,
+      "orders": 225,
+      "capacity": 160,
+      "stored": 140,
+      "stock": {
+        "wood": 1,
+        "plastic": 0,
+        "metal": 40,
+        "seaweed": 47,
+        "water": 48,
+        "fish": 0,
+        "plank": 4,
+        "parts": 0
+      },
+      "buildings": [
+        "purifier",
+        "fishnet",
+        "dock",
+        "workshop",
+        "garden",
+        "cabin",
+        "warehouse"
+      ],
+      "blockedSalvage": 27,
+      "milestonesSeconds": {
+        "firstSalvage": 0,
+        "build:purifier": 0,
+        "build:fishnet": 0,
+        "build:dock": 0,
+        "firstOrder": 0,
+        "build:workshop": 90,
+        "build:garden": 320,
+        "build:cabin": 410,
+        "build:warehouse": 620
+      }
+    },
+    {
+      "hours": 24,
+      "level": 7,
+      "coins": 59269,
+      "xp": 41155,
+      "orders": 1616,
+      "capacity": 160,
+      "stored": 150,
+      "stock": {
+        "wood": 3,
+        "plastic": 3,
+        "metal": 48,
+        "seaweed": 46,
+        "water": 46,
+        "fish": 0,
+        "plank": 4,
+        "parts": 0
+      },
+      "buildings": [
+        "purifier",
+        "fishnet",
+        "dock",
+        "workshop",
+        "garden",
+        "cabin",
+        "warehouse"
+      ],
+      "blockedSalvage": 231,
+      "milestonesSeconds": {
+        "firstSalvage": 0,
+        "build:purifier": 0,
+        "build:fishnet": 0,
+        "build:dock": 0,
+        "firstOrder": 0,
+        "build:workshop": 90,
+        "build:garden": 320,
+        "build:cabin": 410,
+        "build:warehouse": 620
+      }
+    }
+  ]
+}

@@ -1,0 +1,236 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String              @id @default(uuid())
+  email        String              @unique
+  passwordHash String
+  role         String              @default("PLAYER")
+  createdAt    DateTime            @default(now())
+  profile      PlayerProfile?
+  progress     PlayerProgress?
+  inventory    Inventory?
+  island       Island?
+  sessions     Session[]
+  salvage      SalvageSpawn[]
+  orders       PlayerOrder[]
+  listings     MarketListing[]
+  purchases    MarketTransaction[] @relation("Buyer")
+  sales        MarketTransaction[] @relation("Seller")
+  friendships  Friendship[]        @relation("Follower")
+  followers    Friendship[]        @relation("Followed")
+  events       GameEvent[]
+  idempotency  IdempotencyRecord[]
+}
+
+model Session {
+  tokenHash String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+model PlayerProfile {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String
+
+  @@index([name])
+}
+
+model PlayerProgress {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coins         Int      @default(100)
+  xp            Int      @default(0)
+  prosperity    Int      @default(0)
+  salvaged      Int      @default(0)
+  produced      Int      @default(0)
+  orders        Int      @default(0)
+  weeklyPoints  Int      @default(0)
+  weekKey       String   @default("")
+  lastSalvageAt DateTime @default(now())
+
+  @@index([prosperity])
+  @@index([xp])
+}
+
+model Inventory {
+  userId    String @id
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resources Json
+}
+
+model Island {
+  id        String       @id @default(uuid())
+  userId    String       @unique
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tiles     IslandTile[]
+  buildings Building[]
+}
+
+model IslandTile {
+  id       String @id @default(uuid())
+  islandId String
+  island   Island @relation(fields: [islandId], references: [id], onDelete: Cascade)
+  x        Int
+  y        Int
+
+  @@unique([islandId, x, y])
+}
+
+model Building {
+  id       String          @id @default(uuid())
+  islandId String
+  island   Island          @relation(fields: [islandId], references: [id], onDelete: Cascade)
+  kind     String
+  x        Int
+  y        Int
+  level    Int             @default(1)
+  jobs     ProductionJob[]
+  autoEnabled Boolean @default(false)
+
+  @@unique([islandId, x, y])
+}
+
+model ProductionJob {
+  id            String    @id @default(uuid())
+  buildingId    String
+  building      Building  @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  status        String    @default("RUNNING")
+  input         Json
+  output        Json
+  startsAt      DateTime
+  finishesAt    DateTime
+  collectedAt   DateTime?
+  configVersion Int       @default(1)
+
+  @@index([buildingId, status, finishesAt])
+}
+
+model SalvageSpawn {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  reward    Json
+  x         Int
+  y         Int
+  expiresAt DateTime
+  claimedAt DateTime?
+
+  @@index([userId, expiresAt, claimedAt])
+}
+
+model Order {
+  code         String        @id
+  name         String
+  description  String
+  input        Json
+  coins        Int
+  xp           Int
+  level        Int
+  playerOrders PlayerOrder[]
+}
+
+model PlayerOrder {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderCode   String
+  order       Order     @relation(fields: [orderCode], references: [code])
+  name        String
+  description String
+  input       Json
+  coins       Int
+  xp          Int
+  expiresAt   DateTime
+  completedAt DateTime?
+
+  @@index([userId, expiresAt, completedAt])
+}
+
+model MarketListing {
+  id           String              @id @default(uuid())
+  sellerId     String
+  seller       User                @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  resource     String
+  quantity     Int
+  unitPrice    Int
+  status       String              @default("ACTIVE")
+  createdAt    DateTime            @default(now())
+  transactions MarketTransaction[]
+
+  @@index([status, resource, createdAt])
+}
+
+model MarketTransaction {
+  id        String        @id @default(uuid())
+  listingId String
+  listing   MarketListing @relation(fields: [listingId], references: [id])
+  buyerId   String
+  buyer     User          @relation("Buyer", fields: [buyerId], references: [id])
+  sellerId  String
+  seller    User          @relation("Seller", fields: [sellerId], references: [id])
+  resource  String
+  quantity  Int
+  total     Int
+  fee       Int
+  createdAt DateTime      @default(now())
+
+  @@index([buyerId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+model Friendship {
+  userId    String
+  user      User     @relation("Follower", fields: [userId], references: [id], onDelete: Cascade)
+  friendId  String
+  friend    User     @relation("Followed", fields: [friendId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, friendId])
+}
+
+model GameEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+model IdempotencyRecord {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key         String
+  requestHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@id([userId, key])
+  @@index([createdAt])
+}
+
+model GameConfigVersion {
+  id        Int      @id @default(autoincrement())
+  actorId   String
+  scope     String
+  value     Json
+  createdAt DateTime @default(now())
+
+  @@index([scope, id])
+}
