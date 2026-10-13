@@ -13,6 +13,8 @@ model User {
   email        String              @unique
   passwordHash String
   role         String              @default("PLAYER")
+  isGuest      Boolean             @default(false)
+  guestExpiresAt DateTime?
   createdAt    DateTime            @default(now())
   profile      PlayerProfile?
   progress     PlayerProgress?
@@ -28,6 +30,8 @@ model User {
   followers    Friendship[]        @relation("Followed")
   events       GameEvent[]
   idempotency  IdempotencyRecord[]
+
+  @@index([isGuest, createdAt])
 }
 
 model Session {
@@ -171,6 +175,8 @@ model MarketListing {
   transactions MarketTransaction[]
 
   @@index([status, resource, createdAt])
+  @@index([status, createdAt])
+  @@index([sellerId, status])
 }
 
 model MarketTransaction {
@@ -199,6 +205,7 @@ model Friendship {
   createdAt DateTime @default(now())
 
   @@id([userId, friendId])
+  @@index([friendId])
 }
 
 model GameEvent {
@@ -211,6 +218,7 @@ model GameEvent {
 
   @@index([userId, createdAt])
   @@index([type, createdAt])
+  @@index([userId, type, createdAt, id])
 }
 
 model IdempotencyRecord {
@@ -218,11 +226,13 @@ model IdempotencyRecord {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   key         String
   requestHash String
-  result      Json
+  result      Json?
+  expiresAt   DateTime @default(dbgenerated("(now() + interval '7 days')"))
   createdAt   DateTime @default(now())
 
   @@id([userId, key])
   @@index([createdAt])
+  @@index([expiresAt])
 }
 
 model GameConfigVersion {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Driftopia PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/driftopia
+Environment=DRIFTOPIA_ENV_FILE=/opt/driftopia/.env.production
+ExecStart=/opt/driftopia/scripts/backup-db.sh
+UMask=0077

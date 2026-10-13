@@ -29,6 +29,11 @@ export function transact(
       credit = output[resource] ?? 0;
     if (![debit, credit].every((n) => Number.isSafeInteger(n) && n >= 0))
       throw new RuleError("INVALID_AMOUNT", "资源数量无效");
+    if ((next[resource] ?? 0) < debit)
+      throw new RuleError(
+        "INSUFFICIENT_RESOURCES",
+        "资源还不够，去海上打捞一些吧",
+      );
     next[resource] = (next[resource] ?? 0) - debit + credit;
     if (next[resource]! < 0)
       throw new RuleError(

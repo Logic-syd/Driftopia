@@ -1,0 +1,172 @@
+name: driftopia-production
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+x-api-environment: &api-environment
+  NODE_ENV: production
+  PORT: 3001
+  DATABASE_URL: postgresql://driftopia:${POSTGRES_APP_PASSWORD:?Set the application role password}@postgres:5432/driftopia
+  REDIS_URL: redis://:${REDIS_PASSWORD:?Set a random hex password}@redis:6379
+  WEB_ORIGINS: https://${DOMAIN:?Set a real public DNS hostname}
+  TRUST_PROXY: 172.29.18.10
+  METRICS_TOKEN: ${METRICS_TOKEN:?Set a random metrics token}
+  WS_MAX_CONNECTIONS: ${WS_MAX_CONNECTIONS:-600}
+  WS_MAX_PER_IP: ${WS_MAX_PER_IP:-100}
+  WS_MAX_PER_USER: 4
+  GUEST_ENABLED: ${GUEST_ENABLED:-true}
+  GUEST_TOTAL_LIMIT: ${GUEST_TOTAL_LIMIT:-500}
+  GUEST_DAILY_LIMIT: ${GUEST_DAILY_LIMIT:-100}
+  GUEST_TTL_HOURS: ${GUEST_TTL_HOURS:-24}
+  AUTH_MAX_CONCURRENCY: ${AUTH_MAX_CONCURRENCY:-8}
+  DB_POOL_MAX: ${DB_POOL_MAX:-20}
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: driftopia_bootstrap
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a random hex password}
+      POSTGRES_DB: driftopia
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?Set the schema owner password}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set the application role password}
+    command:
+      ["postgres", "-c", "max_connections=60", "-c", "shared_buffers=128MB"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/database/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    networks: [backend]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready -U driftopia_bootstrap -d driftopia && psql -U driftopia_bootstrap -d driftopia -Atc "SELECT count(*) FROM pg_roles WHERE rolname IN (''driftopia_owner'', ''driftopia'')" | grep -qx 2',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 150
+    logging: *logging
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set a random hex password}
+    command:
+      [
+        "sh",
+        "-ec",
+        'exec redis-server --appendonly yes --maxmemory 96mb --maxmemory-policy allkeys-lru --requirepass "$$REDIS_PASSWORD"',
+      ]
+    volumes: ["redis-data:/data"]
+    networks: [backend]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 192m
+    cpus: 0.5
+    pids_limit: 50
+    logging: *logging
+  migrate:
+    image: ${API_IMAGE:?Set the immutable API image tag or digest}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://driftopia_owner:${POSTGRES_OWNER_PASSWORD:?Set the schema owner password}@postgres:5432/driftopia
+      WEB_ORIGINS: https://${DOMAIN:?Set a real public DNS hostname}
+      DB_POOL_MAX: 4
+    command:
+      [
+        "sh",
+        "-ec",
+        "node dist/ops/scripts/migrate.js && node dist/ops/prisma/seed.js && node dist/ops/apply-grants.mjs",
+      ]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,noexec,nosuid"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 50
+    logging: *logging
+  api:
+    image: ${API_IMAGE:?Set the immutable API image tag or digest}
+    environment: *api-environment
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [backend]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=32m,noexec,nosuid"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    init: true
+    mem_limit: 768m
+    cpus: 1.5
+    pids_limit: 100
+    logging: *logging
+  web:
+    image: ${WEB_IMAGE:?Set the matching immutable web image tag or digest}
+    environment:
+      DOMAIN: ${DOMAIN:?Set a real public DNS hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the certificate renewal email}
+      # Go reverse_proxy must reach Compose services directly when Docker has
+      # managed proxy defaults; public ACME egress still uses the inherited proxy.
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},api,postgres,redis
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: ["caddy-data:/data", "caddy-config:/config"]
+    networks:
+      backend: { ipv4_address: 172.29.18.10 }
+      public: {}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 192m
+    cpus: 0.5
+    pids_limit: 100
+    logging: *logging
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    environment:
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},api,postgres,redis
+    profiles: [monitoring]
+    command:
+      [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.retention.time=7d",
+        "--storage.tsdb.retention.size=512MB",
+      ]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${METRICS_TOKEN_FILE:-./secrets/metrics-token}:/run/secrets/metrics-token:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [backend, public]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 50
+    logging: *logging
+networks:
+  backend:
+    internal: true
+    ipam: { config: [{ subnet: 172.29.18.0/24 }] }
+  public: {}
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:

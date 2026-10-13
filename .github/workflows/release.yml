@@ -1,12 +1,29 @@
-name: Build release image
+name: Verified release and optional production deployment
 on:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy verified images to the protected production environment
+        type: boolean
+        default: false
 permissions:
   contents: read
-  packages: write
+concurrency:
+  group: production-release
+  cancel-in-progress: false
 jobs:
-  image:
+  verify:
+    uses: ./.github/workflows/ci.yml
+  images:
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api: ${{ steps.names.outputs.api }}@${{ steps.api.outputs.digest }}
+      web: ${{ steps.names.outputs.web }}@${{ steps.web.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -15,13 +32,71 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image name
-        id: image
+      - name: Image names
+        id: names
         shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
+        run: |
+          echo "api=ghcr.io/${GITHUB_REPOSITORY,,}-api" >> "$GITHUB_OUTPUT"
+          echo "web=ghcr.io/${GITHUB_REPOSITORY,,}-web" >> "$GITHUB_OUTPUT"
+      - name: Build verified API image
+        id: api
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/Dockerfile
+          target: api
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+          tags: ${{ steps.names.outputs.api }}:${{ github.sha }}
+          cache-from: type=gha,scope=driftopia
+          cache-to: type=gha,scope=driftopia,mode=max
+      - name: Build matching HTTPS web image
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile
+          target: web
+          push: true
+          tags: ${{ steps.names.outputs.web }}:${{ github.sha }}
+          cache-from: type=gha,scope=driftopia
+  deploy:
+    if: inputs.deploy && github.ref == 'refs/heads/main'
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Configure required reviewers and branch protection in repository settings.
+    environment:
+      name: production
+      url: ${{ vars.DEMO_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy immutable image digests
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          API_IMAGE: ${{ needs.images.outputs.api }}
+          WEB_IMAGE: ${{ needs.images.outputs.web }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          install -m 700 -d "$RUNNER_TEMP/driftopia-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/driftopia-ssh/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/driftopia-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/driftopia-ssh/"*
+          trap 'rm -rf "$RUNNER_TEMP/driftopia-ssh"' EXIT
+          tar czf "$RUNNER_TEMP/driftopia-release.tgz" compose.production.yaml infra scripts/deploy*.sh scripts/backup-db.sh scripts/restore-db.sh
+          ssh_options=(-i "$RUNNER_TEMP/driftopia-ssh/key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/driftopia-ssh/known_hosts")
+          scp "${ssh_options[@]}" "$RUNNER_TEMP/driftopia-release.tgz" "$DEPLOY_USER@$DEPLOY_HOST:/opt/driftopia/release.tgz"
+          ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "tar xzf /opt/driftopia/release.tgz -C /opt/driftopia && /opt/driftopia/scripts/deploy-release.sh '$API_IMAGE' '$WEB_IMAGE'"
+      - name: External HTTPS readiness
+        env:
+          DEMO_URL: ${{ vars.DEMO_URL }}
+        shell: bash
+        run: |
+          [[ "$DEMO_URL" == https://* ]]
+          curl --fail --show-error --retry 12 --retry-delay 5 --retry-all-errors "$DEMO_URL/api/ready"
+          curl --fail --show-error --output /dev/null "$DEMO_URL/"

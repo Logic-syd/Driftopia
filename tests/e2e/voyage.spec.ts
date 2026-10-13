@@ -127,9 +127,22 @@ test("two independent players build, produce, deliver and trade with persistent 
   await pageB.screenshot({
     path: "docs/screenshots/market-mobile.png",
     fullPage: true,
+    animations: "disabled",
   });
+  const sellerBefore = await (await page.request.get("/api/state")).json();
+  const buyerBefore = await (await pageB.request.get("/api/state")).json();
   await row.getByRole("button", { name: "购买 2 个" }).click();
   await expect(pageB.getByRole("status")).toContainText("交易完成");
+  const sellerAfter = await (await page.request.get("/api/state")).json();
+  const buyerAfter = await (await pageB.request.get("/api/state")).json();
+  expect(sellerAfter.coins).toBe(sellerBefore.coins + 13);
+  expect(buyerAfter.coins).toBe(buyerBefore.coins - 14);
+  expect(buyerAfter.inventory.water).toBe(
+    (buyerBefore.inventory.water ?? 0) + 2,
+  );
+  await expect(page.locator(".coins strong")).toHaveText(
+    String(sellerAfter.coins),
+  );
   await pageB.reload();
   await pageB
     .getByRole("navigation")
@@ -149,6 +162,7 @@ test("two independent players build, produce, deliver and trade with persistent 
   await page.screenshot({
     path: "docs/screenshots/desktop.png",
     fullPage: true,
+    animations: "disabled",
   });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "暂别小岛" }).click();
@@ -165,6 +179,7 @@ test("two independent players build, produce, deliver and trade with persistent 
   await page.screenshot({
     path: "docs/screenshots/mobile.png",
     fullPage: true,
+    animations: "disabled",
   });
   expect(
     await page.evaluate(
@@ -262,4 +277,188 @@ test("automation survives a return visit and reports real production", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "关闭面板" }).click();
   await expect(report).toBeHidden();
+});
+
+test("a real logout preserves production; expansion, upgrades, friends and reconnection work", async ({
+  browser,
+  page,
+}) => {
+  const run = randomUUID().slice(0, 8);
+  const email = `return-${run}@example.test`;
+  const friendName = `海上邻居${run}`;
+  const other = await browser.newContext();
+  const friendPage = await other.newPage();
+  await register(page, "返航建设者", email);
+  await register(friendPage, friendName, `friend-${run}@example.test`);
+  await page.getByRole("button", { name: /快捷打捞/ }).click();
+  await expect(page.getByRole("status")).toContainText("打捞成功");
+  await build(page, "purifier", 0, 0);
+  const openProduction = () =>
+    page
+      .locator(".production-peek")
+      .getByRole("button", { name: /净水器/ })
+      .click();
+  await openProduction();
+  await page.getByRole("button", { name: "升级 · 30 金币" }).click();
+  await expect(page.getByRole("status")).toContainText("升级成功");
+  await expect(
+    page.getByText("YOUR LITTLE ISLAND · LEVEL 2", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "开始生产", exact: true }).click();
+  await expect(page.getByText("正在生产", { exact: true })).toBeVisible();
+  const before = await (await page.request.get("/api/state")).json();
+  const finish = Date.parse(before.buildings[0].jobs[0].finishesAt);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "暂别小岛" }).click();
+  await expect(page.getByRole("button", { name: "回到我的岛" })).toBeVisible();
+  // Real wall-clock completion while the server session is revoked; no DB/time mocking.
+  await page.waitForTimeout(Math.max(0, finish - Date.now() + 500));
+  await page.getByRole("button", { name: "回到我的岛" }).click();
+  await page.getByLabel("邮箱", { exact: true }).fill(email);
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "欢迎回到你的岛" }).click();
+  await openProduction();
+  await expect(page.getByRole("button", { name: /收取产出/ })).toBeEnabled();
+  await page.getByRole("button", { name: /收取产出/ }).click();
+  await expect(page.getByRole("status")).toContainText("收获了");
+  const recovered = await (await page.request.get("/api/state")).json();
+  expect(recovered.inventory.water).toBe((before.inventory.water ?? 0) + 3);
+  expect(recovered.buildings[0].level).toBe(2);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "建造", exact: true })
+    .click();
+  await page.getByText("使用坐标选择建造位置").click();
+  await page.getByLabel("建筑", { exact: true }).selectOption("floor");
+  await page
+    .getByRole("button", { name: "在 (2, 0) 扩建", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("木筏");
+  expect(
+    (await (await page.request.get("/api/state")).json()).tiles,
+  ).toHaveLength(10);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "好友", exact: true })
+    .click();
+  await page.getByLabel("搜索漂流者").fill(friendName);
+  const row = page.locator(".player-row").filter({ hasText: friendName });
+  await expect(row).toContainText("正在岛上");
+  await row.getByRole("button", { name: "+ 好友", exact: true }).click();
+  await expect(row.getByRole("button", { name: "已添加" })).toBeDisabled();
+  await row.getByRole("button", { name: "访问", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: `${friendName}的漂浮小岛` }),
+  ).toBeVisible();
+  await expect(page.getByText(/只读访问/)).toBeVisible();
+  await page.getByRole("button", { name: "← 回到漂流者列表" }).click();
+  await friendPage.getByRole("button", { name: "设置", exact: true }).click();
+  await friendPage.getByRole("button", { name: "暂别小岛" }).click();
+  await expect(row).toContainText("暂时离岛", { timeout: 15000 });
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "排行", exact: true })
+    .click();
+  await expect(page.locator(".rank-score").first()).toBeVisible();
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  const saved = await (await page.request.get("/api/state")).json();
+  await page.context().setOffline(true);
+  await expect(page.locator(".connection-banner")).toContainText("离线");
+  await page.getByRole("button", { name: /快捷打捞/ }).click();
+  await expect(page.getByRole("status")).toContainText("网络已离线");
+  await page.context().setOffline(false);
+  await expect(page.locator(".save-status")).toContainText("实时连接", {
+    timeout: 15000,
+  });
+  const reconnected = await (await page.request.get("/api/state")).json();
+  expect(reconnected.inventory).toEqual(saved.inventory);
+  expect(reconnected.coins).toBe(saved.coins);
+  await other.close();
+});
+
+test("discard requires confirmation and an API failure offers a visible retry", async ({
+  page,
+}) => {
+  await register(page, "细心的岛主", `safe-${randomUUID()}@example.test`);
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "仓库", exact: true })
+    .click();
+  await page.getByText("整理仓库 · 丢弃多余资源").click();
+  await page.getByRole("button", { name: "丢弃 1 个", exact: true }).click();
+  await expect(
+    page.getByRole("alertdialog", { name: "确认丢弃资源" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "保留资源" }).click();
+  expect(
+    (await (await page.request.get("/api/state")).json()).inventory.plastic,
+  ).toBe(12);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  await build(page, "dock", 1, 1);
+  const stockBefore = await (await page.request.get("/api/state")).json();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "集市", exact: true })
+    .click();
+  await page.getByRole("button", { name: "我要出售", exact: true }).click();
+  await page.getByLabel("出售资源").selectOption("plastic");
+  await page.getByLabel("数量", { exact: true }).fill("1");
+  await page.getByLabel("单价（金币）").fill("2");
+  await page.getByRole("button", { name: "挂牌出售", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "我的挂牌", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const ownRow = page.locator(".market-row").filter({ hasText: "细心的岛主" });
+  await expect(ownRow).toContainText("塑料");
+  await ownRow.getByRole("button", { name: "下架", exact: true }).click();
+  await expect(ownRow).toBeHidden();
+  const restored = await (await page.request.get("/api/state")).json();
+  expect(restored.inventory.plastic).toBe(stockBefore.inventory.plastic);
+  expect(restored.coins).toBe(stockBefore.coins);
+  await page.getByRole("button", { name: "关闭面板" }).click();
+  // Inject a transport dependency failure, never a successful game response.
+  await page.route("**/api/players?*", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { message: "邻里服务暂时不可用" } }),
+    }),
+  );
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "好友", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("邻里服务暂时不可用");
+  await page.unroute("**/api/players?*");
+  await page.getByRole("button", { name: "重试加载好友" }).click();
+  await expect(page.locator(".fetch-error")).toBeHidden();
+});
+
+test("guest mode creates a persistent account under normal economic rules", async ({
+  page,
+}) => {
+  const options = await (await page.request.get("/api/auth/options")).json();
+  test.skip(
+    !options.guestEnabled,
+    "Guest mode is explicitly disabled in this environment",
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "免注册体验小岛 · 24 小时" }).click();
+  await expect(page.locator(".guest-banner")).toContainText("体验小岛");
+  const before = await (await page.request.get("/api/state")).json();
+  expect(before.isGuest).toBe(true);
+  expect(Date.parse(before.guestExpiresAt)).toBeGreaterThan(Date.now());
+  await page.getByRole("button", { name: /快捷打捞/ }).click();
+  await expect(page.getByRole("status")).toContainText("打捞成功");
+  await build(page, "purifier", 0, 0);
+  await page.reload();
+  const after = await (await page.request.get("/api/state")).json();
+  expect(after.id).toBe(before.id);
+  expect(after.buildings).toHaveLength(1);
+  expect(after.coins).toBe(before.coins - 10);
+  expect(after.stats.salvaged).toBe(1);
 });

@@ -1,44 +1,94 @@
-# 数据与一致性
+# Data model and consistency
 
-数据模型以 `prisma/schema.prisma` 和版本化 SQL 为准。所有经济数值为整数。金额上限通过 Zod 限制，数据库 CHECK 约束防止负余额、非法交易、负库存和自买自卖。
+The authoritative definitions are [`prisma/schema.prisma`](../prisma/schema.prisma) and immutable SQL files in [`prisma/migrations`](../prisma/migrations). All resource quantities and coin amounts are integers. SQL CHECK constraints supplement API validation because Prisma's schema cannot express every invariant.
 
-| 模型              | 主键 / 约束                   | 用途                                  |
-| ----------------- | ----------------------------- | ------------------------------------- |
-| User              | UUID；email 唯一              | 密码摘要、角色                        |
-| Session           | tokenHash；user FK            | 7 天登录会话                          |
-| PlayerProfile     | userId FK/PK                  | 公开名字（非唯一）                    |
-| PlayerProgress    | userId FK/PK                  | 金币、XP、繁荣、新手统计、周积分      |
-| Inventory         | userId FK/PK                  | 8 种资源 JSONB，整数非负校验          |
-| Island            | UUID；userId 唯一             | 玩家基地                              |
-| IslandTile        | UUID；(islandId,x,y) 唯一     | 木筏地板                              |
-| Building          | UUID；(islandId,x,y) 唯一     | 建筑位置、类型、等级、autoEnabled     |
-| ProductionJob     | UUID；building FK             | 输入输出快照、时刻、状态              |
-| SalvageSpawn      | UUID；user FK                 | 服务器生成奖励、到期和领取时间        |
-| Order             | code                          | 可管理的订单模板                      |
-| PlayerOrder       | UUID；user/order FK           | 订单快照，完成或过期                  |
-| MarketListing     | UUID；seller FK               | 托管库存，ACTIVE/SOLD/CANCELLED       |
-| MarketTransaction | UUID；listing/buyer/seller FK | 不可变交易流水和手续费                |
-| Friendship        | (userId,friendId)             | 单向好友，不允许自己                  |
-| GameEvent         | UUID；user FK                 | 操作、金币/库存前后快照；卖家收入流水 |
-| IdempotencyRecord | (userId,key)                  | 请求哈希与返回快照                    |
-| GameConfigVersion | 自增版本                      | 操作者、scope、配置值与时间           |
+## Main relationships
 
-## 事务边界
+```mermaid
+erDiagram
+  User ||--o{ Session : authenticates
+  User ||--o| PlayerProfile : names
+  User ||--o| PlayerProgress : progresses
+  User ||--o| Inventory : owns
+  User ||--o| Island : owns
+  Island ||--o{ IslandTile : contains
+  Island ||--o{ Building : contains
+  Building ||--o{ ProductionJob : schedules
+  User ||--o{ SalvageSpawn : receives
+  User ||--o{ PlayerOrder : accepts
+  Order ||--o{ PlayerOrder : snapshots
+  User ||--o{ MarketListing : lists
+  MarketListing ||--o{ MarketTransaction : settles
+  User ||--o{ MarketTransaction : buys_or_sells
+  User ||--o{ Friendship : bookmarks
+  User ||--o{ GameEvent : audits
+  User ||--o{ IdempotencyRecord : retries
+```
 
-注册嵌套创建玩家、进度、仓库、岛屿、地板与初始漂流物；随后签发会话。建造、生产入队/领取、订单、交易、升级和好友写入均通过统一幂等事务。挂牌先扣资源进入托管；购买转移托管资源；取消退回剩余库存。容量不足时取消失败，商品保持上架。
+| Model               | Identity / constraint             | Responsibility                                                       |
+| ------------------- | --------------------------------- | -------------------------------------------------------------------- |
+| `User`              | UUID; unique email                | Password digest, server role, guest flag and fixed guest expiry      |
+| `Session`           | Hashed token primary key; user FK | Server-side session expiry; raw token exists only in the cookie      |
+| `PlayerProfile`     | User FK/PK                        | Public display name, not necessarily unique                          |
+| `PlayerProgress`    | User FK/PK                        | Coins, XP, prosperity, tutorial counters, weekly score and week key  |
+| `Inventory`         | User FK/PK                        | JSONB bundle of eight allowed nonnegative integer resources          |
+| `Island`            | UUID; unique user FK              | Personal base                                                        |
+| `IslandTile`        | UUID; unique `(islandId,x,y)`     | Raft floor coordinates                                               |
+| `Building`          | UUID; unique `(islandId,x,y)`     | Kind, position, level and `autoEnabled`                              |
+| `ProductionJob`     | UUID; building FK                 | Recipe snapshots, configuration version, times and collection status |
+| `SalvageSpawn`      | UUID; user FK                     | Server-selected reward and availability/claim timestamps             |
+| `Order`             | Stable code                       | Seeded and administratively configurable template                    |
+| `PlayerOrder`       | UUID; user/template FKs           | Player-specific reward/input snapshot and completion/expiry          |
+| `MarketListing`     | UUID; seller FK                   | Escrowed quantity, unit price and `ACTIVE/SOLD/CANCELLED` state      |
+| `MarketTransaction` | UUID; listing/buyer/seller FKs    | Completed quantity, total, fee and time                              |
+| `Friendship`        | Composite `(userId,friendId)`     | Directed bookmark; self-bookmarks forbidden                          |
+| `GameEvent`         | UUID; user FK                     | Command audit, automatic harvests and seller-income events           |
+| `IdempotencyRecord` | Composite `(userId,key)`          | Command fingerprint, optional result, creation and replay expiry     |
+| `GameConfigVersion` | Increasing integer ID             | Actor ID, configuration scope/value and time                         |
 
-市场购买的锁顺序固定为排序后的玩家 ID → 商品行。advisory hash 碰撞只会额外串行，不破坏正确性。隔离级别为 PostgreSQL 默认 READ COMMITTED，正确性依赖所有经济写路径持有玩家锁；管理员配置不直接改玩家资源。
+The database requires nonnegative coins/XP/prosperity, valid resource keys and integer inventory, positive transaction quantities/totals, fees between zero and total, distinct buyer/seller, building levels 1–3 and valid production/listing states. Placement adjacency, warehouse capacity and ownership remain application-level checks under locks.
 
-## 审计与生命周期
+## Atomic boundaries
 
-GameEvent 保存玩家经济操作前后库存和金币；市场流水记录买卖双方、金额和手续费。配置版本单独持久化。建造/生产任务引用配置快照，后续调整不追溯改写。
+Registration creates the account, profile, progression, inventory, island, initial tiles, salvage and session in one transaction. The response cookie is written only after that commit. Production scheduling reserves inputs with job creation; collection changes inventory and collection status together. Order completion removes requirements and awards coins/XP once.
 
-会话 7 天有效，漂流物 180 秒有效，订单 30 分钟有效。MVP 不删除过期历史或幂等记录，避免重放失去依据；生产前需制定归档策略、数据隐私删除流程和查询分页。交易关联阻止简单级联删除玩家，删除用户需显式处理审计留存要求。
+Listing creation removes goods into escrow. Purchasing transfers escrow to the buyer and currency to the seller, less the fee. Cancellation returns only the remaining escrow. If returned stock cannot fit, the transaction fails and the listing stays active.
 
-主要索引覆盖玩家状态、未领取任务、有效漂流物、有效订单、市场状态+资源+时间、买卖双方交易历史、排行榜和审计时间。迁移额外定义 CHECK 与 JSONB 校验函数，Prisma Schema 不能完整表达这些约束。
+Every economic mutation takes transaction advisory locks for affected player IDs in sorted order. Purchases then lock the listing row. READ COMMITTED is used; this is safe only while all resource writers participate in the same lock protocol. Advisory hash collisions reduce concurrency but do not weaken correctness. Admin recipe configuration does not directly mutate player inventory.
 
-## 迁移
+`GameEvent`, `MarketTransaction` and successful command receipts commit with their corresponding operation. Redis writes, market browse-cache invalidation and socket notifications occur after commit and cannot be used to determine whether the transaction happened. The one-second public market cache is a display optimization; settlement and owner-only listing reads always use PostgreSQL.
 
-`pnpm db:migrate` 执行 `scripts/migrate.ts`，使用 `_driftopia_migrations` 记录文件名、内容 SHA-256 和时间。一次 SQL 文件一个事务；修改已执行文件会拒绝继续，必须新增迁移。不要混用 `prisma migrate deploy` 的迁移历史表。
+## Indexes and query scope
 
-v0.2 的 `202610120003_automation` 为建筑新增 `autoEnabled`，已有建筑默认关闭；不改历史任务或资源。自动结算事件复用 GameEvent 保存最近收成及库存快照。
+Existing indexes cover pending building jobs, active player salvage/orders, public scores, player search and both sides of trade history. The reliability migration adds:
+
+- `(status, createdAt)` for the unfiltered active-market list, alongside `(status, resource, createdAt)` for filtering.
+- `(sellerId, status)` for active-listing limits.
+- `(userId, type, createdAt, id)` for the latest automatic-harvest report.
+- `Friendship(friendId)` for presence notifications to followers.
+- Guest creation and receipt-expiry indexes for bounded lifecycle queries.
+
+An index is not a throughput claim. See [performance measurements](PERFORMANCE.md) for the workload, query changes and remaining synchronization costs. Full cursor pagination is not yet implemented for market/history/admin queries. A separate owner-only market query retrieves all of the authenticated seller's up to twenty active listings, independently of the public latest-100 view.
+
+## Lifetime and retention
+
+Normal sessions last seven days. Guests default to 24 hours and cannot recover their account after cookie loss/logout. Guest accounts use real records and normal rules. Expired guest sellers are excluded from market results and new purchases, but their records and historical trades are retained; there is no silent asset or audit deletion. The overall retained-guest quota intentionally bounds account growth until an operator chooses a retention policy.
+
+Salvage expires after 180 seconds and orders after 30 minutes. Production jobs retain their immutable input/output snapshots and completion times; later recipe edits do not rewrite them.
+
+Idempotency responses have a seven-day replay lifetime. Maintenance removes expired response payloads while keeping the user/key/fingerprint/expiry tombstone. An expired key is always rejected, even before compaction. Deleting the full record would reopen an old operation and is not a safe space-saving strategy.
+
+`scripts/maintenance.ts` previews cleanup by default; `--apply` removes up to 1000 expired sessions and compacts up to 1000 expired receipt payloads per invocation. It does not erase users, trades, audit, completed jobs or tombstones. Long-term archival, account erasure and legal retention policy remain unfinished; foreign keys intentionally prevent casual deletion of trade participants.
+
+## Migrations
+
+`pnpm db:migrate` uses [`scripts/migrate.ts`](../scripts/migrate.ts), which takes an exclusive migration lock and records each directory name, content SHA-256 and completion time in `_driftopia_migrations`. Each SQL file executes in one transaction. Changing an applied file causes a checksum failure; corrections require a new migration.
+
+| Migration                  | Change                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `202610120001_initial`     | Initial schema and indexes                                                                               |
+| `202610120002_constraints` | Economic CHECK constraints and JSONB inventory validation                                                |
+| `202610120003_automation`  | Add `Building.autoEnabled`, default false for existing saves                                             |
+| `202610130001_reliability` | Guest fields, expiring/compactable receipts and query indexes; retain existing balances, jobs and trades |
+
+Do not mix this migration history with `prisma migrate deploy`, and do not use `db push` as an upgrade path. Prisma generates the JavaScript client; reviewed SQL migrations are applied by the explicit runner. Production backup/restore procedures and observed drill results are in [operations](OPERATIONS.md).

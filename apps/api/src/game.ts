@@ -1,12 +1,14 @@
 import { Prisma, type User } from "@prisma/client";
-import { createHash, randomInt } from "node:crypto";
+import { randomInt } from "node:crypto";
 import Redis from "ioredis";
 import { z } from "zod";
 import { db, env } from "./database";
 import { settleAutomation } from "./production";
+import { requestFingerprint, legacyFingerprint } from "./idempotency";
 import {
   BUILDINGS,
   ECONOMY,
+  RESOURCES,
   SALVAGE,
   type Bundle,
   type BuildingKind,
@@ -36,7 +38,9 @@ const json = (value: unknown) =>
 export const redis = new Redis(env.REDIS_URL, {
   lazyConnect: true,
   maxRetriesPerRequest: 1,
-  retryStrategy: () => null,
+  enableOfflineQueue: false,
+  connectTimeout: 2000,
+  retryStrategy: (attempt) => Math.min(100 * 2 ** Math.min(attempt, 6), 5000),
 });
 redis.on("error", () => {
   /* PostgreSQL remains authoritative when the cache is unavailable. */
@@ -102,7 +106,15 @@ function ensureDock(buildings: { kind: string }[]) {
   if (!buildings.some((b) => b.kind === "dock"))
     throw new RuleError("DOCK_REQUIRED", "先建造交易码头，再与其他漂流者交易");
 }
-export async function rebuildRankings() {
+let rankingRebuild: Promise<void> | undefined;
+export function rebuildRankings(): Promise<void> {
+  if (!rankingRebuild)
+    rankingRebuild = performRankingRebuild().finally(() => {
+      rankingRebuild = undefined;
+    });
+  return rankingRebuild;
+}
+async function performRankingRebuild() {
   const rows = await db.playerProgress.findMany();
   const current = weekKey();
   const pipeline = redis.multi();
@@ -119,6 +131,7 @@ export async function rebuildRankings() {
       pipeline.rename(temp, `ranks:${type}`);
     } else pipeline.del(`ranks:${type}`);
   }
+  pipeline.set("ranks:valid-week", current, "EX", 60);
   const result = await pipeline.exec();
   if (result?.some(([err]) => err))
     throw new Error("Leaderboard cache rebuild failed");
@@ -147,9 +160,7 @@ export async function mutate(
   others: string[] = [],
 ) {
   z.string().uuid().parse(key);
-  const requestHash = createHash("sha256")
-    .update(JSON.stringify({ action, body }))
-    .digest("hex");
+  const requestHash = requestFingerprint(action, body);
   const result = await db.$transaction(
     async (tx) => {
       await lock(tx, [id, ...others]);
@@ -157,10 +168,18 @@ export async function mutate(
         where: { userId_key: { userId: id, key } },
       });
       if (prior) {
-        if (prior.requestHash !== requestHash)
+        if (
+          prior.requestHash !== requestHash &&
+          prior.requestHash !== legacyFingerprint(action, body)
+        )
           throw new RuleError(
             "IDEMPOTENCY_CONFLICT",
             "请求编号已用于另一项操作",
+          );
+        if (prior.expiresAt <= new Date() || prior.result === null)
+          throw new RuleError(
+            "IDEMPOTENCY_EXPIRED",
+            "操作凭据已过期，请刷新存档确认结果；旧请求不会再次执行",
           );
         return prior.result;
       }
@@ -197,7 +216,9 @@ export async function mutate(
     },
     { timeout: 15000, maxWait: 10000 },
   );
-  await Promise.all([id, ...others].map(syncRanking));
+  if (action.startsWith("market:")) invalidateMarket();
+  // Cache failure after COMMIT must never turn a successful economy operation into an HTTP failure.
+  await Promise.allSettled([id, ...others].map(syncRanking));
   return result;
 }
 export async function state(id: string): Promise<PlayerState> {
@@ -205,8 +226,12 @@ export async function state(id: string): Promise<PlayerState> {
     async (tx) => {
       await lock(tx, [id]);
       const now = new Date();
-      const automation = await settleAutomation(tx, id, now);
-      const p = await player(tx, id);
+      let p = await player(tx, id);
+      const automation = await settleAutomation(tx, id, now, {
+        stock: p.stock,
+        buildings: p.island.buildings,
+      });
+      if (automation.changed) p = await player(tx, id);
       const report = await tx.gameEvent.findFirst({
         where: { userId: id, type: "production:auto" },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -318,6 +343,8 @@ export async function state(id: string): Promise<PlayerState> {
           id,
           name: p.user.profile!.name,
           role: p.user.role,
+          isGuest: p.user.isGuest,
+          guestExpiresAt: p.user.guestExpiresAt,
           coins: p.progress.coins,
           xp: p.progress.xp,
           level: levelFor(p.progress.xp),
@@ -620,6 +647,61 @@ export async function gameAction(
     throw new RuleError("INVALID_ACTION", "不支持的操作");
   });
 }
+// A bounded one-second display cache; writes always revalidate PostgreSQL.
+let marketGeneration = 0;
+async function queryMarket(
+  userId: string,
+  resource: Resource | undefined,
+  mine: boolean,
+) {
+  return db.marketListing.findMany({
+    where: {
+      status: "ACTIVE",
+      ...(resource ? { resource } : {}),
+      ...(mine ? { sellerId: userId } : {}),
+      seller: {
+        OR: [{ guestExpiresAt: null }, { guestExpiresAt: { gt: new Date() } }],
+      },
+    },
+    include: { seller: { select: { profile: { select: { name: true } } } } },
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    take: mine ? 20 : 100,
+  });
+}
+type MarketRows = Awaited<ReturnType<typeof queryMarket>>;
+const marketCache = new Map<string, { expires: number; value: MarketRows }>();
+const marketRequests = new Map<string, Promise<MarketRows>>();
+function invalidateMarket() {
+  marketGeneration++;
+  marketCache.clear();
+  marketRequests.clear();
+}
+export async function marketList(
+  userId: string,
+  resource?: Resource,
+  mine = false,
+): Promise<MarketRows> {
+  if (resource !== undefined && !Object.hasOwn(RESOURCES, resource))
+    throw new RuleError("INVALID_RESOURCE", "资源类型无效");
+  if (mine) return queryMarket(userId, resource, true);
+  const key = resource ?? "*",
+    cached = marketCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const pending = marketRequests.get(key);
+  if (pending) return pending;
+  const generation = marketGeneration;
+  const request = queryMarket(userId, resource, false)
+    .then((value) => {
+      if (generation === marketGeneration)
+        marketCache.set(key, { expires: Date.now() + 1000, value });
+      return value;
+    })
+    .finally(() => {
+      if (marketRequests.get(key) === request) marketRequests.delete(key);
+    });
+  marketRequests.set(key, request);
+  return request;
+}
 export async function createListing(id: string, key: string, raw: unknown) {
   const data = listingSchema.parse(raw);
   return mutate(id, key, "market:create", data, async (tx) => {
@@ -663,6 +745,15 @@ export async function buyListing(
       });
       if (l.status !== "ACTIVE" || l.quantity < data.quantity)
         throw new RuleError("SOLD_OUT", "来晚一步，库存不足");
+      const seller = await tx.user.findUniqueOrThrow({
+        where: { id: l.sellerId },
+        select: { isGuest: true, guestExpiresAt: true },
+      });
+      if (
+        seller.isGuest &&
+        (!seller.guestExpiresAt || seller.guestExpiresAt <= new Date())
+      )
+        throw new RuleError("SOLD_OUT", "这笔体验账号商品已到期");
       const p = await player(tx, id);
       ensureDock(p.island.buildings);
       const amounts = tradeAmounts(data.quantity, l.unitPrice);
@@ -764,19 +855,28 @@ export async function publicPlayers(query = "") {
   }));
 }
 export async function leaderboard(type: string) {
-  const field = z.enum(["prosperity", "xp", "weeklyPoints"]).parse(type);
+  const field = z.enum(["prosperity", "xp", "weeklyPoints"]).parse(type),
+    current = weekKey();
   let ids: string[] = [];
   try {
-    await rebuildRankings();
+    const [valid, exists] = await Promise.all([
+      redis.get("ranks:valid-week"),
+      redis.exists(`ranks:${field}`),
+    ]);
+    if (valid !== current || !exists) await rebuildRankings();
     ids = await redis.zrevrange(`ranks:${field}`, 0, 19);
   } catch {
-    /* Database fallback */
+    /* Cache failures always fall back to PostgreSQL. */
   }
   const rows = await db.playerProgress.findMany({
-    where: ids.length ? { userId: { in: ids } } : undefined,
-    include: { user: { include: { profile: true } } },
-    orderBy: { [field]: "desc" },
-    take: ids.length ? undefined : 100,
+    where: ids.length
+      ? { userId: { in: ids } }
+      : field === "weeklyPoints"
+        ? { weekKey: current }
+        : undefined,
+    include: { user: { select: { profile: true } } },
+    orderBy: [{ [field]: "desc" }, { userId: "asc" }],
+    take: ids.length ? undefined : 20,
   });
   return rows
     .map((p) => ({
@@ -785,9 +885,9 @@ export async function leaderboard(type: string) {
       level: levelFor(p.xp),
       xp: p.xp,
       prosperity: p.prosperity,
-      weeklyPoints: p.weekKey === weekKey() ? p.weeklyPoints : 0,
+      weeklyPoints: p.weekKey === current ? p.weeklyPoints : 0,
     }))
-    .sort((a, b) => b[field] - a[field])
+    .sort((a, b) => b[field] - a[field] || a.id.localeCompare(b.id))
     .slice(0, 20);
 }
 export const recipeSchema = z.object({

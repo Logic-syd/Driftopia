@@ -1,0 +1,24 @@
+{
+  "verifiedAt": "2026-10-13T05:12:18.097002+00:00",
+  "launch": {
+    "artifact": "dist/perf-api/main-7838b7d8a281e38d43133001c7ec983613b9ddc655ac40e62c02b5d2e5c7e9fb.cjs",
+    "sha256BeforeLaunch": "7838b7d8a281e38d43133001c7ec983613b9ddc655ac40e62c02b5d2e5c7e9fb",
+    "pid": 1018779,
+    "launchedAt": "2026-10-13T05:09:27.336Z",
+    "node": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "port": 3003,
+    "verifiedPortFreeBeforeLaunch": true
+  },
+  "checks": {
+    "readyAndRuntimeIdentity": true,
+    "occupiedPortRejectedExitCode": 1,
+    "manifestWriteFailureRejectedExitCode": 1,
+    "childExited": true,
+    "port3003ObservedEmpty": true,
+    "fixturesCreated": 0
+  },
+  "workspaceChecks": {
+    "typecheckExitCode": 0,
+    "lintExitCode": 0
+  }
+}

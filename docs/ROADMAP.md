@@ -1,29 +1,62 @@
-# 路线图
+# Roadmap and release boundaries
 
-## 第一版：可运行纵向切片
+Source implementation, executed tests and a live deployment are different milestones. This roadmap records scope; [validation](VALIDATION.md) records observed acceptance results, [performance](PERFORMANCE.md) records measurements, and [deployment](DEPLOYMENT.md) records release status.
 
-- [x] Phase 1：Monorepo、Nest/React 项目、PostgreSQL/Redis、账户、基础 UI、CI。
-- [x] Phase 2 核心：原创海面、木筏网格、服务端打捞、容量、建造移动、生产队列、离线结算、新手引导。
-- [x] Phase 3 核心：升级、订单、金币经验、等级解锁、集中配置、经济模拟脚本。
-- [x] Phase 4 核心：真实事务交易、幂等和并发保护、好友、只读访问、排行榜、WebSocket 通知。
-- [x] Phase 5 基础：独立管理后台、权限、配方/奖励版本、审计、测试、Docker/CI、开发部署文档与实际截图。
+## Delivered foundation
 
-## v0.2：生产与经营体验
+- [x] TypeScript monorepo, React/Phaser game, NestJS API, PostgreSQL/Redis and separate admin UI.
+- [x] Real accounts and initial islands; server-authoritative salvage, construction, movement, upgrades and expansion.
+- [x] Persisted recipe snapshots, manual production, bounded automatic production and offline recovery.
+- [x] Merchant orders, currency/XP, progression, warehouse limits and an explicit resource-discard escape hatch.
+- [x] Escrow market, bulk purchase totals, transaction history, owner-only listing retrieval, cancellation and atomic settlement.
+- [x] One-way friends, public read-only island visits and three derived leaderboards.
 
-- [x] 有界自动续产开关、预扣材料、满仓/缺料恢复、离线收成提示、有效配方显示。
-- [x] 市场按数量购买、总价预览；订单优先轮换未见模板。
-- [x] 关闭自动后保留队列，满仓允许分批收取。
+## Portfolio upgrade implementation
 
-## 下一次迭代
+- [x] Canonical idempotency fingerprints, legacy compatibility, expiry rejection and response compaction with retained tombstones.
+- [x] Async bounded password hashing, transactional account/session creation and real guest accounts with fixed lifetime and quotas.
+- [x] Session/Origin-authenticated Socket.IO, private rooms, revocation, connection limits, invalidation envelopes and snapshot recovery.
+- [x] Structured request/error logs, request IDs, separate liveness/readiness and protected Prometheus metrics.
+- [x] Normal ranking cache hits avoid full rebuilds; targeted indexes and bounded database pool configuration. The public market view has a one-second bounded cache with concurrent-query sharing and commit invalidation; state settlement reuses its locked snapshot.
+- [x] Real PostgreSQL contention and rollback scenarios, transport/security tests and expanded browser acceptance scenarios. Results belong in the validation report; source presence alone is not a pass.
+- [x] Reproducible 100/500-user workload harness with raw-artifact and environment reporting; only completed runs in the performance report count as measurement evidence.
+- [x] Same-origin production Compose/Caddy configuration, build/release quality gates, constrained services and backup/restore scripts. Runbook evidence distinguishes local smoke checks from public deployment.
+- [x] Guest entry, network/retry states, discard confirmation, keyboard modal focus and a five-step tutorial.
+- [x] Placement ghost/validity feedback, smooth camera controls, confirmed salvage effects, production bubbles, visual day/night cycle, optional sound and reduced motion.
+- [x] Source-backed technical audit, architecture diagrams, data model, API contracts, five ADRs and explicit trade-offs.
 
-- [ ] 手感：拖动打捞钩、路径与收获粒子、更多建筑差异、音效、按用户设置减少 Phaser 动画。
-- [ ] 生产：更多配方、切换生产目标、8 小时离线策略与数值平衡。
-- [ ] 社交：双向好友申请、邀请链接、可平移缩放的访友场景、在线状态。
-- [ ] 游戏：居民真实需求、海域探索、合作事件、任务章节。
-- [ ] 经济：基于模拟与玩家会话修订容量/资源消耗；目前自动队列最多 30 批，仍未覆盖长时间离线，首日 2–3 小时内容目标未达成。
-- [ ] 账户：邮箱验证、密码找回、账号删除、多设备会话撤销。
-- [ ] 运营：分页、存档备份还原演练、异常检测扩展、过期记录归档、监控告警。
-- [ ] 扩容：增量榜单校验、Socket.IO Redis adapter、分布式限流、负载测试。
-- [ ] 平台：微信小游戏桥接和独立发布流水线；当前只有 Web 浏览器版本。
+## P0 — correctness gates to preserve
 
-不把开发环境启动等同于公网部署。未进行长期数值平衡、压力测试或新云任务快照恢复验证。
+- Run lint, typecheck, unit tests, real PostgreSQL integration tests, build and browser acceptance for every release candidate. A failed stage blocks release.
+- Keep twenty-way last-item contention, repeat collection, build/trade races, buy/cancel races, dropped-response retries and rollback recovery in the test suite.
+- Apply additive migrations to existing saves and preserve audit, escrow and command-replay invariants.
+- Do not accept frontend-only rewards, cache-derived balances or socket-only durable state.
+
+## P1 — public release remains conditional
+
+- [ ] Provision a deployment target, owned DNS name and scoped deployment credentials; run the protected release workflow against it.
+- [ ] Verify remote CI for the exact deployed commit and record its run URL. GitHub API access from this workspace returned 403; hosted run status remains unknown.
+- [ ] Complete public HTTPS acceptance from an external browser using two accounts, including reconnect and offline production.
+- [ ] Run backups on a schedule, keep copies away from the application host and repeat a restore drill on the actual target.
+- [ ] Connect persistent metrics/log collection and alert delivery; exported metrics and documented alerts alone do not deliver notifications.
+- [ ] Define production retention and deletion: audit/history, old jobs/orders, guest accounts and idempotency tombstones. Guest conversion/account recovery is not implemented.
+- [ ] Add email verification, password recovery, session management and account deletion before expanding beyond a bounded demo.
+
+## P2 — measured performance and product depth
+
+- [ ] Repeat load tests against the final HTTPS topology with a separate generator and representative long-lived player data. Investigate state synchronization query/lock cost and authentication bursts before increasing limits.
+- [ ] Evaluate narrower state reads, production/config query reuse, cursor pagination and leaderboard repair cadence against measured workloads.
+- [ ] Revise the optimistic economic simulation for automatic queues and real session cadence; tune currency sinks, XP, order cadence and production duration.
+- [ ] Measure the tutorial with first-time players. Five minutes is a design goal, not a measured completion-time claim.
+- [ ] Profile physical mobile devices, browser audio restrictions, battery use and large-island rendering; headless Chromium coverage is insufficient for those claims.
+- [ ] Plan longer offline progress explicitly. Current queues are thirty prepaid batches, not eight hours of catch-up rewards.
+
+## P3 — deliberately deferred
+
+- Bilateral friend requests, invitations, social moderation and a fully navigable friend's Phaser island.
+- Resident needs, exploration, cooperative events, task chapters, character movement and richer weather/audio.
+- WeChat Mini Game bridges and platform-specific publishing.
+- Multi-instance scaling: distributed rate limits, shared presence, Socket.IO Redis adapter, coordinated cache rebuilds and possibly a durable outbox.
+- Multi-region availability, season archives and a commercially balanced content roadmap.
+
+No unchecked deployment item is satisfied by a local development port, a workflow YAML file, or a screenshot. The latest audit-to-implementation history is in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).

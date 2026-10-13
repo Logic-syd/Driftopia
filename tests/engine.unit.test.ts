@@ -22,6 +22,14 @@ describe("server-independent economic invariants", () => {
       wood: 2,
       plank: 2,
     }));
+  it("requires inputs to exist before outputs from the same transaction are credited", () => {
+    expect(() => transact({ wood: 0 }, { wood: 4 }, { wood: 5 }, 80)).toThrow(
+      "资源还不够",
+    );
+    expect(transact({ wood: 4 }, { wood: 4 }, { wood: 5 }, 80)).toMatchObject({
+      wood: 5,
+    });
+  });
   it("disallows overlapping buildings and missing floors", () => {
     expect(() =>
       validatePlacement([{ x: 0, y: 0 }], [{ id: "a", x: 0, y: 0 }], 0, 0),

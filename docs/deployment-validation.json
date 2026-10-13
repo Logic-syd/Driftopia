@@ -1,0 +1,159 @@
+{
+  "scope": "Isolated production Compose project driftopia-smoke; not a public deployment",
+  "publicDemo": {
+    "status": "blocked",
+    "reason": "No deployment server, public domain/DNS or deployment credentials were provided"
+  },
+  "environment": {
+    "docker": "28.4.0",
+    "storageDriver": "vfs",
+    "apiNode": "24.21.0",
+    "prisma": "6.19.3",
+    "postgres": "17.11",
+    "redisImage": "redis:7-alpine",
+    "prometheus": "3.5.0"
+  },
+  "images": {
+    "driftopia-api:review": "sha256:107096d440634b8864e7790b7d40a1d827840de3f39f3c1b74e4fa27b65502e8",
+    "driftopia-web:review": "sha256:20a19c6ef7b15e6d0379211863fdfa2caeaa7093ddd3de4f3e2807e8ece62261"
+  },
+  "imageNote": "Full API/web multistage builds passed. Final API image adds only the updated database grants file to deny User DELETE; no application JavaScript changed. Migration rerun and permission denial were verified after that layer.",
+  "https": {
+    "result": "passed",
+    "transport": "HTTPS with validated private CA",
+    "checks": [
+      "secure session",
+      "registration/login",
+      "salvage",
+      "build",
+      "production",
+      "logout/offline recovery",
+      "order",
+      "two-account market purchase",
+      "idempotent retry",
+      "coins/inventory/history",
+      "friend/visit",
+      "leaderboard",
+      "restricted persistent guest",
+      "admin denial",
+      "metrics not public"
+    ],
+    "durationSeconds": 26.02
+  },
+  "redisRecovery": {
+    "result": "passed",
+    "degradedReady": {
+      "ok": true,
+      "database": "connected",
+      "schema": "current",
+      "redis": "unavailable",
+      "status": "degraded"
+    },
+    "recoveredReady": {
+      "ok": true,
+      "database": "connected",
+      "schema": "current",
+      "redis": "connected",
+      "status": "ready"
+    },
+    "apiContainerUnchanged": true,
+    "apiStartedAtUnchanged": true,
+    "assetsUnchanged": true
+  },
+  "backupRestore": {
+    "result": "passed",
+    "restoredDatabase": "restore_drill_20261013",
+    "comparison": {
+      "User": {
+        "rows": 4,
+        "match": true
+      },
+      "Inventory": {
+        "rows": 4,
+        "match": true
+      },
+      "PlayerProgress": {
+        "rows": 4,
+        "match": true
+      },
+      "Building": {
+        "rows": 3,
+        "match": true
+      },
+      "ProductionJob": {
+        "rows": 2,
+        "match": true
+      },
+      "MarketListing": {
+        "rows": 1,
+        "match": true
+      },
+      "MarketTransaction": {
+        "rows": 1,
+        "match": true
+      },
+      "IdempotencyRecord": {
+        "rows": 17,
+        "match": true
+      },
+      "GameEvent": {
+        "rows": 18,
+        "match": true
+      },
+      "Friendship": {
+        "rows": 1,
+        "match": true
+      },
+      "_driftopia_migrations": {
+        "rows": 4,
+        "match": true
+      }
+    }
+  },
+  "metrics": {
+    "prometheusUp": 1,
+    "privateWithoutToken": 401,
+    "privateWithToken": 200,
+    "publicViaCaddy": 404,
+    "alertRulesValidated": 3
+  },
+  "applicationDatabaseRole": {
+    "superuser": false,
+    "createDatabase": false,
+    "createRole": false,
+    "connectionLimit": 25,
+    "denied": [
+      "CREATE TABLE",
+      "ALTER ROLE to superuser",
+      "SELECT pg_authid credential catalog",
+      "DELETE _driftopia_migrations",
+      "DELETE MarketTransaction",
+      "DELETE GameEvent",
+      "DELETE User"
+    ]
+  },
+  "operations": {
+    "maintenanceApply": {
+      "expiredSessions": 0,
+      "expiredReceipts": 0,
+      "deletedSessions": 0,
+      "compactedReceipts": 0
+    },
+    "migrationsApplied": 4,
+    "migrationRerun": "all already applied, seed preserved existing values, grants applied",
+    "applicationUid": 1000
+  },
+  "postValidation": {
+    "smokeContainers": "stopped to isolate subsequent performance measurements",
+    "databaseVolumes": "preserved",
+    "builderCache": "removed; no database volumes were removed after successful gameplay validation"
+  },
+  "notVerified": [
+    "Public ACME certificate issuance",
+    "Public browser demo/Test F",
+    "Remote GitHub Actions execution",
+    "SSH deployment to an external host",
+    "Off-host encrypted backup replication",
+    "External alert delivery"
+  ]
+}

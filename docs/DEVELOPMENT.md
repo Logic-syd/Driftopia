@@ -10,7 +10,7 @@
 
 `pnpm dev` 同时启动 API 3001、Web 5173、Admin 5174。前端代理 `/api` 和 `/socket.io`，Cookie 保持同源。首次注册后正常游玩，无「假数据模式」。Docker 只启动 PostgreSQL 和 Redis，避免前端开发热更新依赖镜像重建。
 
-检查 `GET /api/health` 应显示 database 和 redis connected；前端注册完成后会加载实际基地。Redis 是可降级缓存，数据库断开则不允许经济操作。
+`GET /api/health` 检查进程存活；检查 `GET /api/ready` 应显示 database、schema、redis 就绪；前端注册完成后会加载实际基地。Redis 是可降级缓存，数据库断开则不允许经济操作。
 
 云任务进程不保证快照恢复。新任务先 `docker compose up -d --wait`，再确认 `.env` 和依赖，必要时运行 `bash scripts/setup-cloud.sh`；启动 `pnpm dev` 并检查健康响应。已经有目标进程时复用它，避免端口冲突。每个云任务独立，不创建额外 worktree。
 
@@ -41,3 +41,7 @@ pnpm exec prisma migrate diff --from-migrations prisma/migrations --to-schema-da
 ## 故障记录
 
 Prisma 原生引擎域名在此云环境未开放。已采用官方 PrismaPg + JS client/schema engine，生成过程不下载原生引擎且保留 npm 完整性校验。Prisma 6.19 实验 JS migration deploy 对系统 name 类型解析失败，故使用受版本控制的 SQL 与 `pg` 事务迁移 runner。无需将 `binaries.prisma.sh` 加入网络白名单。
+
+## Portfolio upgrade operations
+
+`pnpm maintenance` 只读报告过期会话/回执，`pnpm maintenance -- --apply` 分批删除过期会话、压缩回执结果并保留幂等键摘要。`pnpm perf` 使用独立500/100用户fixture进行真实HTTP和Socket负载，先阅读 PERFORMANCE.md，勿对未授权实例运行。生产配置/备份见 DEPLOYMENT.md、OPERATIONS.md。

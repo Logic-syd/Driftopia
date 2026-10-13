@@ -1,0 +1,9 @@
+[Unit]
+Description=Driftopia expired sessions and idempotency maintenance
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/driftopia
+ExecStart=/usr/bin/docker compose --env-file /opt/driftopia/.env.production -f /opt/driftopia/compose.production.yaml run --rm --no-deps api node dist/ops/scripts/maintenance.js --apply

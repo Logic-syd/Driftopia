@@ -5,3 +5,7 @@ playwright-report
 test-results
 prisma/schema.prisma
 .env.example
+
+# Applied SQL checksums and raw measurement artifacts must stay immutable.
+prisma/migrations/
+docs/performance/

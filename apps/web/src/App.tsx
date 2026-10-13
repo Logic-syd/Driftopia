@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   Anchor,
   ArrowRight,
@@ -23,7 +29,15 @@ import {
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { Ocean } from "./Ocean";
-import { api, useGame, type Panel } from "./store";
+import {
+  api,
+  clearSession,
+  useGame,
+  type Panel,
+  type SyncTopic,
+} from "./store";
+import { createSyncGate, type SyncNotice } from "./realtime";
+import { reducedMotion, playFeedback } from "./feedback";
 import {
   BUILDINGS,
   ECONOMY,
@@ -83,9 +97,36 @@ function Modal({
   onClose: () => void;
   wide?: boolean;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const frame = requestAnimationFrame(() =>
+      modalRef.current?.querySelector<HTMLButtonElement>("button")?.focus(),
+    );
+    return () => {
+      cancelAnimationFrame(frame);
+      previous?.focus();
+    };
+  }, []);
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+      if (e.key === "Tab") {
+        const controls = Array.from(
+          modalRef.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]',
+          ) ?? [],
+        );
+        const first = controls[0],
+          last = controls[controls.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
     };
     window.addEventListener("keydown", f);
     return () => window.removeEventListener("keydown", f);
@@ -100,6 +141,7 @@ function Modal({
       }}
     >
       <section
+        ref={modalRef}
         className={`modal ${wide ? "wide" : ""}`}
         role="dialog"
         aria-modal="true"
@@ -126,7 +168,25 @@ function Modal({
 function Auth() {
   const [mode, setMode] = useState<"register" | "login">("register"),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [guestEnabled, setGuestEnabled] = useState(false);
+  useEffect(() => {
+    void api<{ guestEnabled: boolean }>("/auth/options")
+      .then((o) => setGuestEnabled(o.guestEnabled))
+      .catch(() => {});
+  }, []);
+  async function guest() {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/auth/guest", {});
+      await useGame.getState().refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "体验小岛暂时无法靠岸");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -224,6 +284,20 @@ function Auth() {
             <ArrowRight size={17} />
           </button>
         </form>
+        {guestEnabled && (
+          <div className="guest-entry">
+            <button
+              className="secondary full"
+              disabled={busy}
+              onClick={() => void guest()}
+            >
+              免注册体验小岛 · 24 小时
+            </button>
+            <p>
+              创建独立的真实小岛，正常参与生产与交易。请使用同一浏览器返回。
+            </p>
+          </div>
+        )}
         <div className="auth-foot">
           <Leaf size={13} /> 随心建造 · 慢慢生长 · 一起漂流
         </div>
@@ -257,6 +331,12 @@ function Guide({ state }: { state: PlayerState }) {
       text: "给远航的人一杯水，换取金币",
       panel: "orders" as Panel,
     },
+    {
+      done: state.tiles.length > 9,
+      title: "给新生活多留一格空间",
+      text: "扩建木筏，给仓库和交易码头留位置。仓库增加容量，码头连接其他玩家。",
+      panel: "build" as Panel,
+    },
   ];
   const index = tasks.findIndex((t) => !t.done);
   const task = tasks[index];
@@ -266,8 +346,10 @@ function Guide({ state }: { state: PlayerState }) {
         <span className="mini-icon">
           <Flag size={16} />
         </span>
-        <span>漂流手记</span>
-        <small>{index === -1 ? 4 : index}/4</small>
+        <span>漂流手记 · 约 5 分钟</span>
+        <small>
+          {index === -1 ? tasks.length : index}/{tasks.length}
+        </small>
       </div>
       <div className="guide-progress">
         {tasks.map((t, i) => (
@@ -363,7 +445,23 @@ function BuildPanel({ state }: { state: PlayerState }) {
 }
 function CoordinateBuild({ state }: { state: PlayerState }) {
   const busy = useGame((s) => s.busy);
-  const [kind, setKind] = useState<BuildingKind>("purifier");
+  const [kind, setKind] = useState<BuildingKind | "floor">("purifier");
+  const expansion = state.tiles
+    .flatMap((t) =>
+      [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ].map(([dx, dy]) => ({ x: t.x + dx, y: t.y + dy })),
+    )
+    .filter(
+      (t, i, all) =>
+        Math.abs(t.x) <= 8 &&
+        Math.abs(t.y) <= 8 &&
+        !state.tiles.some((p) => p.x === t.x && p.y === t.y) &&
+        all.findIndex((p) => p.x === t.x && p.y === t.y) === i,
+    );
   return (
     <div className="coordinate-build">
       <label>
@@ -371,8 +469,9 @@ function CoordinateBuild({ state }: { state: PlayerState }) {
         <select
           aria-label="建筑"
           value={kind}
-          onChange={(e) => setKind(e.target.value as BuildingKind)}
+          onChange={(e) => setKind(e.target.value as BuildingKind | "floor")}
         >
+          <option value="floor">扩建木筏地板</option>
           {Object.entries(BUILDINGS)
             .filter(([, b]) => b.unlock <= state.level)
             .map(([id, b]) => (
@@ -383,7 +482,7 @@ function CoordinateBuild({ state }: { state: PlayerState }) {
         </select>
       </label>
       <div className="tile-buttons">
-        {state.tiles
+        {(kind === "floor" ? expansion : state.tiles)
           .filter(
             (t) => !state.buildings.some((b) => b.x === t.x && b.y === t.y),
           )
@@ -392,10 +491,15 @@ function CoordinateBuild({ state }: { state: PlayerState }) {
               disabled={busy}
               key={`${t.x},${t.y}`}
               onClick={() =>
-                void useGame.getState().action("/game/build", { kind, ...t })
+                void useGame
+                  .getState()
+                  .action(kind === "floor" ? "/game/expand" : "/game/build", {
+                    ...(kind === "floor" ? {} : { kind }),
+                    ...t,
+                  })
               }
             >
-              在 ({t.x}, {t.y}) 建造
+              在 ({t.x}, {t.y}) {kind === "floor" ? "扩建" : "建造"}
             </button>
           ))}
       </div>
@@ -405,6 +509,11 @@ function CoordinateBuild({ state }: { state: PlayerState }) {
 function Inventory({ state }: { state: PlayerState }) {
   const [resource, setResource] = useState<Resource>("plastic");
   const [quantity, setQuantity] = useState(1);
+  const [confirmation, setConfirmation] = useState<{
+    resource: Resource;
+    quantity: number;
+  } | null>(null);
+  const busy = useGame((s) => s.busy);
   return (
     <>
       <div className="inventory-summary">
@@ -434,9 +543,7 @@ function Inventory({ state }: { state: PlayerState }) {
           className="discard-form"
           onSubmit={(e) => {
             e.preventDefault();
-            void useGame
-              .getState()
-              .action("/game/discard", { resource, quantity });
+            setConfirmation({ resource, quantity });
           }}
         >
           <label>
@@ -467,7 +574,11 @@ function Inventory({ state }: { state: PlayerState }) {
           <button
             className="secondary"
             disabled={
-              useGame.getState().busy || !(state.inventory[resource] ?? 0)
+              busy ||
+              !(state.inventory[resource] ?? 0) ||
+              !Number.isInteger(quantity) ||
+              quantity < 1 ||
+              quantity > (state.inventory[resource] ?? 0)
             }
           >
             丢弃 {quantity} 个
@@ -477,6 +588,42 @@ function Inventory({ state }: { state: PlayerState }) {
           丢弃不会获得金币，操作后无法找回。可用于腾出紧急打捞空间。
         </p>
       </details>
+      {confirmation && (
+        <div
+          className="confirm-card"
+          role="alertdialog"
+          aria-label="确认丢弃资源"
+        >
+          <h3>
+            丢弃 {confirmation.quantity} 个
+            {RESOURCES[confirmation.resource].name}？
+          </h3>
+          <p>
+            资源将永久移除，也不会获得金币。你也可以通过委托或集市腾出空间。
+          </p>
+          <div className="confirm-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setConfirmation(null)}
+            >
+              保留资源
+            </button>
+            <button
+              className="danger-button"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await useGame.getState().action("/game/discard", confirmation)
+                )
+                  setConfirmation(null);
+              }}
+            >
+              {busy ? "正在整理…" : "确认永久丢弃"}
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -582,12 +729,10 @@ function Production({ state, id }: { state: PlayerState; id: string }) {
                 checked={b.autoEnabled}
                 disabled={busy}
                 onChange={(e) =>
-                  void useGame
-                    .getState()
-                    .action("/game/automation", {
-                      buildingId: id,
-                      enabled: e.target.checked,
-                    })
+                  void useGame.getState().action("/game/automation", {
+                    buildingId: id,
+                    enabled: e.target.checked,
+                  })
                 }
               />
             </label>
@@ -826,32 +971,47 @@ function ProductionNotice({ state }: { state: PlayerState }) {
 function Market({ state }: { state: PlayerState }) {
   const [list, setList] = useState<ListingView[]>([]),
     [filter, setFilter] = useState(""),
-    [tab, setTab] = useState<"browse" | "sell" | "history">("browse"),
+    [tab, setTab] = useState<"browse" | "mine" | "sell" | "history">("browse"),
     [history, setHistory] = useState<HistoryItem[]>([]),
     [resource, setResource] = useState<Resource>("wood"),
     [quantity, setQuantity] = useState(1),
     [price, setPrice] = useState(3),
     [loading, setLoading] = useState(true),
+    [error, setError] = useState<string | null>(null),
     busy = useGame((s) => s.busy);
+  const revision = useGame((s) => s.revisions.market);
+  const requestVersion = useRef(0);
   const dock = state.buildings.some((b) => b.kind === "dock");
   const reload = () => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setError(null);
     Promise.all([
-      api<ListingView[]>(`/market${filter ? `?resource=${filter}` : ""}`),
+      api<ListingView[]>(
+        `/market?${new URLSearchParams({ ...(filter ? { resource: filter } : {}), ...(tab === "mine" ? { mine: "true" } : {}) })}`,
+      ),
       api<HistoryItem[]>("/market/history"),
     ])
       .then(([l, h]) => {
+        if (version !== requestVersion.current) return;
         setList(l);
         setHistory(h);
       })
-      .catch((e) => useGame.getState().notify(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (version === requestVersion.current) setError(e.message);
+      })
+      .finally(() => {
+        if (version === requestVersion.current) setLoading(false);
+      });
   };
   useEffect(() => {
     reload();
     const t = setInterval(reload, 8000);
-    return () => clearInterval(t);
-  }, [filter, tab]);
+    return () => {
+      clearInterval(t);
+      requestVersion.current++;
+    };
+  }, [filter, tab, revision]);
   async function sell(e: FormEvent) {
     e.preventDefault();
     if (
@@ -859,7 +1019,7 @@ function Market({ state }: { state: PlayerState }) {
         .getState()
         .action("/market", { resource, quantity, unitPrice: price })
     ) {
-      setTab("browse");
+      setTab("mine");
       reload();
     }
   }
@@ -881,6 +1041,7 @@ function Market({ state }: { state: PlayerState }) {
         {(
           [
             ["browse", "海上集市"],
+            ["mine", "我的挂牌"],
             ["sell", "我要出售"],
             ["history", "交易记录"],
           ] as const
@@ -888,13 +1049,27 @@ function Market({ state }: { state: PlayerState }) {
           <button
             key={id}
             className={tab === id ? "active" : ""}
+            aria-pressed={tab === id}
             onClick={() => setTab(id)}
           >
             {label}
           </button>
         ))}
       </div>
-      {tab === "browse" && (
+      {error && (
+        <div className="fetch-error" role="alert">
+          {error}
+          <button className="text-button" onClick={reload}>
+            重试加载市场
+          </button>
+        </div>
+      )}
+      {loading && (
+        <p className="loading-note" aria-live="polite">
+          正在同步集市…
+        </p>
+      )}
+      {(tab === "browse" || tab === "mine") && (
         <>
           <label className="filter">
             筛选资源
@@ -911,7 +1086,15 @@ function Market({ state }: { state: PlayerState }) {
           {!list.length ? (
             <Empty
               icon={<Ship size={38} />}
-              title={loading ? "商船正在靠岸…" : "海上集市还很安静"}
+              title={
+                error
+                  ? "集市暂时无法靠岸"
+                  : loading
+                    ? "商船正在靠岸…"
+                    : tab === "mine"
+                      ? "你还没有在售商品"
+                      : "海上集市还很安静"
+              }
               text="第一笔生意，或许就从你开始。"
             />
           ) : (
@@ -984,7 +1167,13 @@ function Market({ state }: { state: PlayerState }) {
         (!history.length ? (
           <Empty
             icon={<Box size={36} />}
-            title="还没有成交记录"
+            title={
+              loading
+                ? "正在读取交易记录…"
+                : error
+                  ? "交易记录暂时无法读取"
+                  : "还没有成交记录"
+            }
             text="你的每一笔交易，都会被好好记住。"
           />
         ) : (
@@ -1044,27 +1233,45 @@ interface Visit {
 }
 function Friends({ state }: { state: PlayerState }) {
   const [query, setQuery] = useState(""),
-    [players, setPlayers] = useState<PublicPlayer[]>([]),
+    [players, setPlayers] = useState<(PublicPlayer & { online?: boolean })[]>(
+      [],
+    ),
     [friendIds, setFriendIds] = useState<string[]>([]),
     [visit, setVisit] = useState<Visit | null>(null),
-    [onlyFriends, setOnlyFriends] = useState(false);
+    [onlyFriends, setOnlyFriends] = useState(false),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState<string | null>(null),
+    [retry, setRetry] = useState(0),
+    [visiting, setVisiting] = useState<string | null>(null);
+  const revision = useGame((s) => s.revisions.friends);
+  const busy = useGame((s) => s.busy);
   useEffect(() => {
     let live = true;
-    void Promise.all([
-      api<PublicPlayer[]>(`/players?q=${encodeURIComponent(query)}`),
-      api<{ friendId: string }[]>("/friends"),
-    ])
-      .then(([p, f]) => {
-        if (live) {
-          setPlayers(p.filter((p) => p.id !== state.id));
-          setFriendIds(f.map((f) => f.friendId));
-        }
-      })
-      .catch((e) => useGame.getState().notify(e.message));
+    setLoading(true);
+    setError(null);
+    const timer = setTimeout(() => {
+      void Promise.all([
+        api<PublicPlayer[]>(`/players?q=${encodeURIComponent(query)}`),
+        api<{ friendId: string }[]>("/friends"),
+      ])
+        .then(([p, f]) => {
+          if (live) {
+            setPlayers(p.filter((p) => p.id !== state.id));
+            setFriendIds(f.map((f) => f.friendId));
+          }
+        })
+        .catch((e) => {
+          if (live) setError(e.message);
+        })
+        .finally(() => {
+          if (live) setLoading(false);
+        });
+    }, 250);
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, [query, state.id]);
+  }, [query, state.id, revision, retry]);
   if (visit)
     return (
       <>
@@ -1131,6 +1338,22 @@ function Friends({ state }: { state: PlayerState }) {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
+      {loading && (
+        <p className="loading-note" aria-live="polite">
+          正在寻找海上邻里…
+        </p>
+      )}
+      {error && (
+        <div className="fetch-error" role="alert">
+          {error}
+          <button
+            className="text-button"
+            onClick={() => setRetry((n) => n + 1)}
+          >
+            重试加载好友
+          </button>
+        </div>
+      )}
       {players
         .filter((p) => !onlyFriends || friendIds.includes(p.id))
         .map((p) => (
@@ -1139,22 +1362,34 @@ function Friends({ state }: { state: PlayerState }) {
             <div>
               <h4>{p.name}</h4>
               <p>
-                Lv.{p.level} · 繁荣度 {p.prosperity}
+                Lv.{p.level} · 繁荣度 {p.prosperity} ·{" "}
+                {p.online ? "正在岛上" : "暂时离岛"}
               </p>
             </div>
             <button
               className="text-button"
-              onClick={() =>
-                api<Visit>(`/players/${p.id}/island`)
-                  .then(setVisit)
-                  .catch((e) => useGame.getState().notify(e.message))
-              }
+              disabled={visiting !== null}
+              onClick={async () => {
+                setVisiting(p.id);
+                try {
+                  setVisit(await api<Visit>(`/players/${p.id}/island`));
+                } catch (e) {
+                  useGame
+                    .getState()
+                    .notify(
+                      e instanceof Error ? e.message : "访问失败",
+                      "error",
+                    );
+                } finally {
+                  setVisiting(null);
+                }
+              }}
             >
-              访问
+              {visiting === p.id ? "靠岸中…" : "访问"}
             </button>
             <button
               className="secondary"
-              disabled={friendIds.includes(p.id)}
+              disabled={busy || friendIds.includes(p.id)}
               onClick={async () => {
                 if (await useGame.getState().action(`/friends/${p.id}`, {}))
                   setFriendIds([...friendIds, p.id]);
@@ -1164,14 +1399,16 @@ function Friends({ state }: { state: PlayerState }) {
             </button>
           </div>
         ))}
-      {!players.filter((p) => !onlyFriends || friendIds.includes(p.id))
-        .length && (
-        <Empty
-          icon={<Users size={38} />}
-          title="海风会带来新的朋友"
-          text="邀请另一位玩家注册，就可以发现彼此的岛屿。"
-        />
-      )}
+      {!loading &&
+        !error &&
+        !players.filter((p) => !onlyFriends || friendIds.includes(p.id))
+          .length && (
+          <Empty
+            icon={<Users size={38} />}
+            title="海风会带来新的朋友"
+            text="邀请另一位玩家注册，就可以发现彼此的岛屿。"
+          />
+        )}
     </>
   );
 }
@@ -1179,12 +1416,29 @@ function Ranking() {
   const [type, setType] = useState<"prosperity" | "xp" | "weeklyPoints">(
       "prosperity",
     ),
-    [players, setPlayers] = useState<PublicPlayer[]>([]);
+    [players, setPlayers] = useState<PublicPlayer[]>([]),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState<string | null>(null),
+    [retry, setRetry] = useState(0);
+  const revision = useGame((s) => s.revisions.leaderboard);
   useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
     void api<PublicPlayer[]>(`/leaderboard?type=${type}`)
-      .then(setPlayers)
-      .catch((e) => useGame.getState().notify(e.message));
-  }, [type]);
+      .then((players) => {
+        if (live) setPlayers(players);
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [type, revision, retry]);
   return (
     <>
       <div className="tabs">
@@ -1204,6 +1458,29 @@ function Ranking() {
           </button>
         ))}
       </div>
+      {loading && (
+        <p className="loading-note" aria-live="polite">
+          正在读取群岛排名…
+        </p>
+      )}
+      {error && (
+        <div className="fetch-error" role="alert">
+          {error}
+          <button
+            className="text-button"
+            onClick={() => setRetry((n) => n + 1)}
+          >
+            重试加载排行榜
+          </button>
+        </div>
+      )}
+      {!loading && !error && !players.length && (
+        <Empty
+          icon={<Trophy size={38} />}
+          title="群岛的新故事正在开始"
+          text="完成建造和委托，让你的岛屿登上榜单。"
+        />
+      )}
       {players.map((p, i) => (
         <div className="player-row" key={p.id}>
           <span className={`rank-number rank-${i}`}>
@@ -1256,15 +1533,17 @@ function Profile({ state }: { state: PlayerState }) {
   );
 }
 function Preferences() {
-  const [reduced, setReduced] = useState(
-    localStorage.getItem("driftopia-motion") === "reduced",
+  const [reduced, setReduced] = useState(reducedMotion());
+  const [sound, setSound] = useState(
+    localStorage.getItem("driftopia-sound") === "on",
   );
+  const [loggingOut, setLoggingOut] = useState(false);
   return (
     <>
       <div className="setting-row">
         <div>
           <h3>减少界面动画</h3>
-          <p>让界面的切换更安静一些</p>
+          <p>同时关闭海浪、建筑浮动与镜头缓动</p>
         </div>
         <input
           aria-label="减少界面动画"
@@ -1285,6 +1564,25 @@ function Preferences() {
       </div>
       <div className="setting-row">
         <div>
+          <h3>轻柔操作音效</h3>
+          <p>打捞与成功操作时的一点回响，默认关闭</p>
+        </div>
+        <input
+          aria-label="轻柔操作音效"
+          type="checkbox"
+          checked={sound}
+          onChange={(e) => {
+            setSound(e.target.checked);
+            localStorage.setItem(
+              "driftopia-sound",
+              e.target.checked ? "on" : "off",
+            );
+            if (e.target.checked) playFeedback("success");
+          }}
+        />
+      </div>
+      <div className="setting-row">
+        <div>
           <h3>操作方式</h3>
           <p>
             点击打捞和建筑 · 拖动海面平移
@@ -1296,14 +1594,27 @@ function Preferences() {
       </div>
       <button
         className="secondary full"
+        disabled={loggingOut}
         onClick={async () => {
-          await api("/auth/logout", {});
-          useGame.setState({ state: null, panel: null, selected: null });
+          setLoggingOut(true);
+          try {
+            await api("/auth/logout", {});
+            clearSession();
+          } catch (error) {
+            useGame
+              .getState()
+              .notify(
+                error instanceof Error ? error.message : "退出失败，请重试",
+                "error",
+              );
+          } finally {
+            setLoggingOut(false);
+          }
         }}
       >
-        <LogOut size={16} /> 暂别小岛
+        <LogOut size={16} /> {loggingOut ? "正在安全离岛…" : "暂别小岛"}
       </button>
-      <p className="panel-note">Driftopia v0.2 · 原创多人海上生存经营原型</p>
+      <p className="panel-note">Driftopia v0.3 · 原创多人海上生存经营</p>
     </>
   );
 }
@@ -1321,31 +1632,99 @@ const panels: Record<
   profile: { title: "漂流者档案", kicker: "YOUR STORY AT SEA" },
 };
 export default function App() {
-  const { state, loading, panel, selected, toast, placement, busy } = useGame();
+  const {
+    state,
+    loading,
+    panel,
+    selected,
+    toast,
+    toastKind,
+    placement,
+    busy,
+    connected,
+    socketStatus,
+    syncError,
+    syncing,
+  } = useGame();
   const now = useClock();
   useEffect(() => {
-    void useGame.getState().refresh();
+    const refresh = () => void useGame.getState().refresh();
+    refresh();
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible")
-        void useGame.getState().refresh();
-    }, 5000);
-    return () => clearInterval(interval);
+      if (document.visibilityState === "visible" && navigator.onLine) refresh();
+    }, 10000);
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const online = () => {
+      useGame
+        .getState()
+        .invalidate(["state", "market", "friends", "leaderboard"]);
+    };
+    const offline = () =>
+      useGame.setState({
+        connected: false,
+        socketStatus: "offline",
+        syncError: "网络已离线，已保存的进度会在重连后同步。",
+      });
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
   }, []);
   useEffect(() => {
     if (!state?.id) return;
-    const socket = io({ withCredentials: true });
-    const refresh = () => void useGame.getState().refresh();
-    socket.on("state:changed", refresh);
-    socket.on("market:changed", refresh);
+    const socket = io({ withCredentials: true, reconnectionDelayMax: 5000 });
+    const gate = createSyncGate();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = new Set<SyncTopic>();
+    const enqueue = (topics: SyncTopic[]) => {
+      topics.forEach((topic) => pending.add(topic));
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        useGame.getState().invalidate([...pending]);
+        pending.clear();
+      }, 100);
+    };
+    const resync = () => enqueue(["state", "market", "friends", "leaderboard"]);
+    socket.on("connect", () => {
+      useGame.setState({ socketStatus: "connected" });
+      resync();
+    });
+    socket.on("sync:ready", (message: { epoch: string; sequence: number }) => {
+      gate.ready(message);
+      resync();
+    });
+    socket.on("sync:invalidate", (message: SyncNotice) =>
+      enqueue(gate.accept(message)),
+    );
+    socket.on("disconnect", () =>
+      useGame.setState({
+        socketStatus: navigator.onLine ? "reconnecting" : "offline",
+      }),
+    );
+    socket.on("connect_error", () =>
+      useGame.setState({
+        socketStatus: navigator.onLine ? "reconnecting" : "offline",
+      }),
+    );
+    socket.on("session:expired", () => {
+      clearSession();
+      useGame.getState().notify("登录已到期，请重新靠岸", "error");
+    });
     return () => {
+      if (timer) clearTimeout(timer);
       socket.disconnect();
     };
   }, [state?.id]);
   useEffect(() => {
-    document.documentElement.classList.toggle(
-      "reduce-motion",
-      localStorage.getItem("driftopia-motion") === "reduced",
-    );
+    document.documentElement.classList.toggle("reduce-motion", reducedMotion());
   }, []);
   const nav = [
     { id: "build", label: "建造", icon: Hammer },
@@ -1414,7 +1793,7 @@ export default function App() {
           </>
         ) : (
           <span className="edition">
-            THE FIRST VOYAGE <span>／</span> v0.2
+            THE FIRST VOYAGE <span>／</span> v0.3
           </span>
         )}
       </header>
@@ -1424,9 +1803,45 @@ export default function App() {
           <p>正在寻找你的海岸…</p>
         </div>
       ) : !state ? (
-        <Auth />
+        <>
+          <Auth />
+          {syncError && (
+            <div className="connection-banner" role="alert">
+              {syncError}
+              <button
+                disabled={syncing}
+                onClick={() => void useGame.getState().refresh()}
+              >
+                重新连接
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <>
+          {(syncError || socketStatus !== "connected") && (
+            <div className="connection-banner" role="alert">
+              <span>{syncError ?? "实时连接恢复中，进度仍会定期同步。"}</span>
+              <button
+                disabled={syncing || !navigator.onLine}
+                onClick={() => void useGame.getState().refresh()}
+              >
+                {syncing ? "同步中…" : "重新同步"}
+              </button>
+            </div>
+          )}
+          {state.isGuest && (
+            <div className="guest-banner">
+              体验小岛 · 剩余{" "}
+              {Math.max(
+                0,
+                Math.ceil(
+                  (Date.parse(state.guestExpiresAt ?? "") - now) / 3600000,
+                ),
+              )}{" "}
+              小时 · 同一浏览器可返回，退出登录后无法找回
+            </div>
+          )}
           <div className="world-title">
             <div className="eyebrow">
               <span className="live-dot" /> 海风群岛 · 宁静海域
@@ -1435,7 +1850,10 @@ export default function App() {
               {state.name}的漂浮小岛<span>✧</span>
             </h1>
             <p>
-              <span>☀</span> 风和日丽，适合把日子过慢一点。
+              <span>{Math.floor(now / 240000) % 2 === 0 ? "☀" : "☾"}</span>{" "}
+              {Math.floor(now / 240000) % 2 === 0
+                ? "海面染上晨光，适合开启新的旅程。"
+                : "星光落在海面，小岛仍在慢慢生长。"}
             </p>
             <div className="world-badges">
               <span>
@@ -1545,7 +1963,11 @@ export default function App() {
             </span>
             <span className="save-status">
               <span className="live-dot" />{" "}
-              {useGame.getState().connected ? "云端已同步" : "网络连接中断"}
+              {!connected
+                ? "等待同步"
+                : socketStatus === "connected"
+                  ? "云端已同步 · 实时连接"
+                  : "云端已同步 · 定时更新"}
             </span>
           </div>
           {panel && (
@@ -1578,9 +2000,12 @@ export default function App() {
         </>
       )}
       {toast && (
-        <div className="toast" role="status">
+        <div
+          className={`toast ${toastKind === "error" ? "toast-error" : ""}`}
+          role="status"
+        >
           <span>
-            <Check size={16} />
+            {toastKind === "error" ? <X size={16} /> : <Check size={16} />}
           </span>
           {toast}
         </div>

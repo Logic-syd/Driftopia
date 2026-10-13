@@ -1,0 +1,21 @@
+groups:
+  - name: driftopia
+    rules:
+      - alert: DriftopiaApiUnavailable
+        expr: up{job="driftopia"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Driftopia metrics have been unavailable for two minutes
+      - alert: DriftopiaServerErrorRate
+        expr: sum(rate(driftopia_http_requests_total{job="driftopia",status=~"5.."}[5m])) / clamp_min(sum(rate(driftopia_http_requests_total{job="driftopia"}[5m])), 0.001) > 0.02
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Driftopia HTTP server errors exceed two percent
+      - alert: DriftopiaMemoryPressure
+        expr: process_resident_memory_bytes{job="driftopia"} > 650 * 1024 * 1024
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Driftopia API RSS approaches the default 768 MiB memory limit

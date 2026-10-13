@@ -1,7 +1,7 @@
 {
   "name": "driftopia",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packageManager": "pnpm@11.25.0",
   "engines": {
     "node": ">=22"
@@ -22,15 +22,19 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
-    "economy": "tsx scripts/economy.ts"
+    "economy": "tsx scripts/economy.ts",
+    "maintenance": "tsx scripts/maintenance.ts",
+    "perf": "tsx scripts/load-test.ts",
+    "perf:leaderboard": "tsx scripts/perf-baseline.ts",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@nestjs/common": "^11.1.0",
     "@nestjs/core": "^11.1.0",
     "@nestjs/platform-express": "^11.1.0",
     "@nestjs/throttler": "^6.4.0",
-    "@prisma/adapter-pg": "6.19.0",
-    "@prisma/client": "6.19.0",
+    "@prisma/adapter-pg": "6.19.3",
+    "@prisma/client": "6.19.3",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.3",
     "helmet": "^8.1.0",
@@ -60,7 +64,7 @@
     "concurrently": "^9.2.1",
     "eslint": "^9.39.0",
     "prettier": "^3.6.2",
-    "prisma": "6.19.0",
+    "prisma": "6.19.3",
     "tsup": "^8.5.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",

@@ -8,3 +8,11 @@ playwright-report/
 test-results/
 coverage/
 .DS_Store
+
+# Production secrets and database archives
+/secrets/
+/backups/
+!infra/production.env.example
+
+__pycache__/
+*.pyc

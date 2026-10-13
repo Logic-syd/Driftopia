@@ -1,47 +1,72 @@
 # Driftopia · 漂流乌托邦
 
-一方木筏，万种可能。原创 H5 多人海上生存经营游戏的v0.2 可运行纵向切片。
+**A multiplayer ocean survival and management game built with TypeScript — v0.3.0.** Start with a small raft, salvage materials, run production, fulfil merchant orders and trade resources with other players. The game UI is in Chinese; the engineering documentation below explains the implementation and its limits.
 
-从打捞第一块木材，到生产淡水、交付商船委托，再与另一位漂流者完成真实交易。所有经济状态由服务端验证并持久化到 PostgreSQL；前端不决定资源或金币。
+The project demonstrates a full-stack product with a server-authoritative economy, real PostgreSQL settlement, reconnectable browser clients and a reproducible test environment. It extends the original game rather than replacing it with a portfolio mockup.
 
-![桌面游戏截图](docs/screenshots/desktop.png)
+**Public demo: not deployed yet.** A server and domain have not been provided. Remote CI remains unverified because GitHub API access from this workspace returned 403; this does not establish a passing or failing hosted run. See [deployment status and prerequisites](docs/DEPLOYMENT.md). To play now, follow the local setup below.
 
-<details><summary>移动端截图</summary>
+![Driftopia desktop game — actual application capture](docs/screenshots/desktop.png)
 
-<img src="docs/screenshots/mobile.png" alt="移动端游戏界面" width="320" />
+<details>
+<summary>Mobile and production screenshots</summary>
+
+<img src="docs/screenshots/mobile.png" alt="Driftopia mobile game" width="300" />
+<img src="docs/screenshots/market-mobile.png" alt="Bulk purchases in the player market" width="300" />
+
+[Automatic production](docs/screenshots/automation.png). These screenshots were regenerated from the v0.3.0 browser acceptance run with animation disabled for stable captures.
 
 </details>
 
-v0.2 新增自动续产、回岛收成提示、批量购买与订单轮换。操作截图：[自动生产](docs/screenshots/automation.png)、[手机集市](docs/screenshots/market-mobile.png)。
+## Playable product
 
-## 已实现
+The complete loop is **salvage → build → produce → fulfil orders → expand → trade**.
 
-- 注册、登录、HttpOnly Cookie 会话；跨账号云端存档隔离。
-- Phaser 原创程序绘制海面、等距木筏、漂流物和建筑；鼠标/触摸点击、拖动、缩放。
-- 服务端生成和验证的打捞、8 种资源、仓库容量、9 类建造（含地板），放置、移动、三级升级。
-- 持久化生产队列：手动最多 3 批，自动续产最多预排 30 批；预扣材料、离线结算、最近收成提示、满仓暂停与重复领取保护。
-- 等级解锁、优先发放未见委托的商船订单、金币经验、四步新手引导。
-- 真实玩家市场：筛选、挂牌、按数量批量购买、撤单、交易历史、整数手续费、幂等重试与并发保护。
-- 玩家搜索、单向好友列表、只读基地访问，三类排行榜、Redis 重建与数据库回退。
-- Socket.IO 状态失效通知、5 秒状态同步。
-- 独立管理后台：服务端权限、玩家与交易查看、经济指标、基础异常规则、版本化配方与订单奖励审计。
-- 严格 TypeScript、Zod、单元/数据库集成/双浏览器 E2E、Docker、CI、经济模拟和工程文档。
+- Register and sign in; the server creates and persists a personal 3×3 raft, inventory and progression. Optional guest entry creates a quota-limited real account with a default 24-hour lifetime.
+- Salvage server-generated resources; place, move and upgrade buildings; expand the raft and warehouse.
+- Run production while away. Manual queues contain up to three batches; optional automation reserves inputs for up to thirty batches and reports harvested output on return.
+- Complete merchant orders for coins and experience, unlocking additional production chains.
+- List escrowed resources, buy a chosen quantity from another account, find all your active listings in a separate tab, cancel unsold listings and inspect trade history. Both sides' assets update in one transaction.
+- Search players, bookmark friends, see online presence, view public islands and compare three leaderboards.
+- Follow a five-step introduction, use a placement preview and enjoy a visual day/night cycle; sound is optional and reduced motion is supported.
+- Manage recipe and order-reward versions through a separate role-protected admin application.
 
-这是可迭代的 MVP，不是完整商业游戏。探索海域、居民 AI、周期合作、复杂动效/音效、微信小游戏适配、密码找回、邮件验证和长期经济平衡仍在路线图中。自动续产需主动开启，离线只推进已预排的最多 30 批；重新同步存档时收取并从当前时间续排。好友目前为单向收藏，不是双向申请。
+Friends are currently **one-way bookmarks**, and visits are read-only. Offshore boats and distant islands are scenery. There is no combat, exploration progression, resident simulation or monetization. Long-term economy balance is unfinished; this is a playable engineering portfolio, not a claim of commercial content completeness.
 
-## 技术栈
+## Engineering at a glance
 
-Node.js 24、pnpm 11、TypeScript、React 19、Vite 7、Phaser 3、Zustand、自定义响应式 CSS；NestJS 11、Prisma 6.19（JavaScript engine + 官方 PostgreSQL adapter）、PostgreSQL 17、Redis 7、Socket.IO；Vitest、Playwright、ESLint、Prettier。
+| Layer        | Implementation                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| Browser      | React 19, Vite 7, Phaser 3, Zustand, responsive CSS                                            |
+| API          | Node.js 24, NestJS 11, Socket.IO, Zod                                                          |
+| Persistence  | PostgreSQL 17, Prisma 6.19.3 JavaScript client engine with the official `pg` adapter           |
+| Cache        | Redis 7 for rankings; bounded one-second in-process cache for public market views              |
+| Shared rules | Strict TypeScript packages for rules, config and transport contracts                           |
+| Verification | Vitest, real PostgreSQL integration tests, Playwright browser tests                            |
+| Delivery     | Docker Compose, Caddy HTTPS, versioned SQL migrations, GitHub Actions, backup/restore runbooks |
 
-当前无需要可靠后台队列的任务，因此未引入 BullMQ。UI 使用独立 CSS 而非 Tailwind。需要更多任务/视觉体系时再引入，避免未使用依赖。
+```mermaid
+flowchart LR
+  Web[React panels + Phaser scene] -->|HTTPS commands and snapshots| API[NestJS modular monolith]
+  Admin[React admin] -->|Role-checked commands| API
+  API --> Rules[Shared pure game rules]
+  API -->|Transactions, locks, audit| PG[(PostgreSQL authority)]
+  API -->|Derived scores| Redis[(Redis cache)]
+  API -->|Authenticated invalidations| Web
+```
 
-## 本地启动
+The browser submits intent, never balances or reward values. Economic writes share player locks, transactional audit records and idempotency receipts. Redis and WebSocket availability do not determine whether a trade has committed.
 
-要求：Node.js 24、pnpm 11.25.0、Docker Compose v2。
+For a fast code review, start with [`game.ts`](apps/api/src/game.ts) (`mutate` and `buyListing`), [`production.ts`](apps/api/src/production.ts), [`game-engine`](packages/game-engine/src/index.ts), and the [real-database integration scenarios](tests/economy.integration.test.ts).
+
+## Run locally
+
+Prerequisites: Git, Node.js 24, pnpm 11.25.0 and Docker with Compose v2. Start Docker before running these commands.
 
 ```sh
-corepack enable
-corepack prepare pnpm@11.25.0 --activate
+git clone https://github.com/Logic-syd/Driftopia.git
+cd Driftopia
+npm install --global pnpm@11.25.0
 cp .env.example .env
 docker compose up -d --wait
 pnpm install --frozen-lockfile
@@ -51,57 +76,75 @@ pnpm db:seed
 pnpm dev
 ```
 
-游戏端口 `5173`，后台端口 `5174`，API 端口 `3001`。在本机浏览器访问对应端口。先创建账号；不会预置默认管理员或共享密码。管理员配置：在 `.env` 将 `ADMIN_EMAIL` 设置为一个已注册的账号邮箱，再运行 `pnpm db:seed`。
+On Windows PowerShell, replace `cp .env.example .env` with `Copy-Item .env.example .env`. Open the game on port **5173** of your computer; the admin app uses **5174**, and the API uses **3001**. Vite proxies HTTP and Socket.IO to keep browser cookies same-origin. Register a player to begin; there is no shared default administrator password.
 
-云工作区运行 `bash scripts/setup-cloud.sh` 准备依赖及服务。设置脚本不会覆盖已有 `.env`，不会重置数据库。每个云任务已经隔离，直接使用当前仓库，不需要额外 worktree。配置与进程恢复见 [开发说明](docs/DEVELOPMENT.md)。
+For two-player testing, use a normal and a private browser window, register two accounts and build a trading dock on each island. Have one player sell two water at seven coins each; the buyer pays fourteen coins and the seller receives thirteen after the rounded 5% fee.
 
-## 验证
+Administrator access is explicit: register a separate account, set `ADMIN_EMAIL` to its email on the server, then run `pnpm db:seed`. Never reuse development database credentials in a public environment. The [development guide](docs/DEVELOPMENT.md) covers cloud setup, process recovery and migrations.
 
-```sh
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-# 下列命令需要数据库和正在运行的 API
-pnpm test:integration
-# E2E 还需要 web 服务
-pnpm exec playwright install chromium
-pnpm test:e2e
-# 已有系统 Chromium 时：
-PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium pnpm test:e2e
-pnpm economy
-```
+## Reliability decisions
 
-E2E 创建两个独立浏览器会话，经 UI 注册、打捞、建造、生产、交付订单、买卖淡水，再验证刷新及重新登录的存档。集成测试创建并清理自己的测试用户；E2E 保留带 `voyage-`、`canvas-`、`auto-` 邮箱前缀的测试账号用于检查，不要对生产数据库运行测试。
+| Concern            | Approach                                                                                 | Decision                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Service boundaries | Keep related settlement in one deployable API and database                               | [Modular monolith](docs/ADR/0001-modular-monolith.md)                            |
+| Client trust       | Validate ownership, time, resources, costs and rewards on the server                     | [Server authority](docs/ADR/0002-server-authoritative-economy.md)                |
+| Concurrent trading | Escrow, sorted player locks, listing row lock, conditional decrement, one commit         | [Transactions and retries](docs/ADR/0003-market-transactions-and-idempotency.md) |
+| Cache failure      | Rebuildable rankings and short-lived market views; settlement always rechecks PostgreSQL | [Cache strategy](docs/ADR/0004-disposable-ranking-cache.md)                      |
+| Offline progress   | Persist prepaid jobs and settle finite queues from the server clock                      | [Offline production](docs/ADR/0005-bounded-offline-production.md)                |
 
-## 架构
+A purchase follows this transaction boundary:
 
 ```mermaid
-flowchart LR
-  Web[React + Phaser] -->|Cookie / HTTPS| API[NestJS 权威 API]
-  Admin[React 管理后台] --> API
-  API --> Rules[纯 TS 游戏规则 + 数据配置]
-  API -->|事务 / 锁 / 审计| PG[(PostgreSQL)]
-  API --> Redis[(Redis 排行榜缓存)]
-  API -->|Socket.IO 失效通知| Web
+flowchart TD
+  Intent[Listing ID + quantity + idempotency key] --> Locks[Lock buyer and seller in stable order]
+  Locks --> Receipt{Existing command receipt?}
+  Receipt -->|Same command| Replay[Return recorded result or reject expired receipt]
+  Receipt -->|Different command| Reject[Reject key reuse]
+  Receipt -->|New key| Listing[Lock and re-read listing]
+  Listing --> Validate[Check availability, funds, capacity and dock]
+  Validate --> Settle[Update escrow, inventory and both balances]
+  Settle --> Audit[Write trade, audit and command receipt]
+  Audit --> Commit[Commit PostgreSQL transaction]
+  Commit --> Notify[Best-effort cache update and invalidation]
 ```
+
+See [architecture and WebSocket sequence](docs/ARCHITECTURE.md), [data model and constraints](docs/DATABASE.md), and [API contracts](docs/API.md). Notification delivery is best effort; reconnecting clients recover from database-backed HTTP state rather than replaying economic deltas.
+
+## Tests, measurements and delivery evidence
+
+```sh
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:integration  # PostgreSQL, Redis and the API must be running
+pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e          # Also requires the web service
+pnpm economy          # Deterministic economy model, not a load test
+```
+
+Use a disposable development/test database. Integration fixtures clean up their own records; browser tests may leave accounts for inspection. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` can select an existing system Chromium.
+
+The strategy separates deterministic rule/client transport tests, real-database atomicity/concurrency checks, HTTP/WebSocket security tests and browser gameplay acceptance. Browser acceptance covers real logout/return, two-account asset reconciliation, friends/presence, rankings, guest access, offline recovery and owner listing cancellation; protocol tests cover duplicate/out-of-order notifications. The [validation report](docs/VALIDATION.md) records commands, observed results and incomplete acceptance criteria. The [performance report](docs/PERFORMANCE.md) contains the reproducible 100/500-user workload, completed measurements, hardware and limitations; its numbers are not a cloud capacity guarantee. The [economy model](docs/ECONOMY.md) describes balance problems separately from API throughput.
+
+GitHub Actions defines lint, type checking, unit/integration tests, builds and browser checks. The presence of a workflow file is not evidence of a successful hosted run; final totals and command outcomes are maintained in the validation report. [Deployment](docs/DEPLOYMENT.md) and [operations](docs/OPERATIONS.md) document HTTPS, environment management, resource limits, backup and recovery. [Development records](docs/DEVELOPMENT_LOG.md) distinguish implemented changes from executed checks.
+
+## Trade-offs and next steps
+
+The current architecture targets a bounded demo on one API instance. In-process presence and rate limits, common player locks, ranking repair work and state synchronization queries need further work before horizontal scaling. There is no durable event outbox; HTTP resynchronization is the recovery mechanism. Expired idempotency receipts preserve rejection tombstones, so payload cleanup does not eliminate long-term key storage growth.
+
+Automatic production is bounded by already-paid jobs, not an eight-hour catch-up simulation. Email verification, password recovery, account deletion, full historical pagination, season archives and mature economic balancing remain unfinished. Broader game content is deliberately behind correctness and operational readiness.
+
+The [baseline technical audit](docs/TECHNICAL_AUDIT.md) preserves the original findings. The [prioritized roadmap](docs/ROADMAP.md) and [validation report](docs/VALIDATION.md) show what still blocks a public release.
 
 ```text
-apps/web           游戏 UI、Phaser 场景、Zustand
-apps/api           会话、游戏事务、市场、社交、管理 API
-apps/admin         管理后台
-packages/shared    Schema 与 API 类型
-packages/game-config 资源、建筑、配方、等级、订单配置
-packages/game-engine 纯函数经济规则
-packages/ui        通用显示格式
-prisma             数据模型、版本化 SQL 迁移、seed
-scripts            迁移执行、经济模拟、云环境准备
+apps/web             Game UI, Phaser scene, server snapshot store
+apps/api             Auth, economic transactions, production, realtime, operations
+apps/admin           Role-protected management UI
+packages/game-config Resource, recipe, building and progression definitions
+packages/game-engine Pure economic and placement rules
+packages/shared      Runtime schemas and API types
+packages/ui          Shared display helpers
+prisma               Data model, immutable SQL migrations and seed
+scripts              Migration runner, setup, economic and operational tools
 ```
-
-## 文档与部署
-
-- [游戏设计](docs/GAME_DESIGN.md) · [架构](docs/ARCHITECTURE.md) · [数据库](docs/DATABASE.md)
-- [经济](docs/ECONOMY.md) · [API](docs/API.md) · [开发](docs/DEVELOPMENT.md)
-- [部署](docs/DEPLOYMENT.md) · [路线图](docs/ROADMAP.md) · [验收记录](docs/VALIDATION.md)
-
-`pnpm build` 输出 `dist/web`、`dist/admin` 和 `dist/api`。生产通过反向代理提供静态文件并转发 `/api` 与 `/socket.io`；启用 HTTPS、设置精确 `WEB_ORIGINS`、持久化数据库卷并使用独立生产凭据。Docker 镜像和 Nginx 示例位于 `infra/`，当前交付验证了本环境运行，未发布到公网。

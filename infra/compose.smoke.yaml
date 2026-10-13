@@ -1,0 +1,13 @@
+# Local validation only: Caddy automatically uses its private CA for localhost.
+# This validates HTTPS without requesting a public ACME certificate.
+services:
+  api:
+    environment:
+      WEB_ORIGINS: https://localhost:8443
+  migrate:
+    environment:
+      WEB_ORIGINS: https://localhost:8443
+  web:
+    environment:
+      DOMAIN: localhost
+    ports: !override ["127.0.0.1:8443:443", "127.0.0.1:8080:80"]

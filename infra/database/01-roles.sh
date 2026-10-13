@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+set -eu
+# Runs only when PostgreSQL initializes a NEW volume. psql variables quote the
+# passwords as SQL literals; none of these values are printed to application logs.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  --set=owner_password="$POSTGRES_OWNER_PASSWORD" \
+  --set=app_password="$POSTGRES_APP_PASSWORD" <<'SQL'
+CREATE ROLE driftopia_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5 PASSWORD :'owner_password';
+CREATE ROLE driftopia LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 25 PASSWORD :'app_password';
+ALTER DATABASE driftopia OWNER TO driftopia_owner;
+REVOKE ALL ON DATABASE driftopia FROM PUBLIC;
+GRANT CONNECT ON DATABASE driftopia TO driftopia;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO driftopia;
+ALTER DEFAULT PRIVILEGES FOR ROLE driftopia_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO driftopia;
+ALTER DEFAULT PRIVILEGES FOR ROLE driftopia_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO driftopia;
+ALTER DEFAULT PRIVILEGES FOR ROLE driftopia_owner IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE driftopia_owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO driftopia;
+SQL

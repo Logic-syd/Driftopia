@@ -1,0 +1,43 @@
+{
+  "recordedAt": "2026-10-13T05:05:16.681359+00:00",
+  "issue": "A tool-session Ctrl-C ended the command wrapper but did not terminate the child API process. Subsequent API starts encountered EADDRINUSE. The first load runner inferred artifact and Prisma version from files on disk rather than verifying the process actually serving port 3003.",
+  "exploratoryRuns": [
+    "046d0444-4dab-4668-a882-365e52f7920c",
+    "06bfac24-fcfb-4ae2-9fb6-ba596b28dcdc"
+  ],
+  "validObservations": [
+    "Recorded real HTTP request counts, durations and statuses",
+    "Server metric samples and authenticated Socket.IO connection counts",
+    "PostgreSQL fixture counts and economic reconciliation totals"
+  ],
+  "unverifiedMetadata": [
+    "apiArtifactSha256 describes the bundle on disk when results were written, not an attested running-process bundle",
+    "environment.prismaClient and pgDriver came from package files visible to the generator; exact dependency versions already loaded in the older API process were not attested"
+  ],
+  "interpretation": "Preserve the raw numeric measurements as exploratory observations. Do not present these runs as strict controlled version-to-version comparisons or as measurements of the final implementation.",
+  "invalidExcludedRun": {
+    "runId": "4b631aa3-290e-4ad9-9757-79ced7772baf",
+    "reason": "Attempted second round reached the retained old API after EADDRINUSE. It was deliberately interrupted during investigation; server shutdown disconnected all 100 clients. It is excluded from performance conclusions.",
+    "artifact": "load-100-4b631aa3-290e-4ad9-9757-79ced7772baf.json"
+  },
+  "correction": {
+    "oldIdentifiedApiPidsTerminated": [
+      967250,
+      976514,
+      1010686
+    ],
+    "port3003VerifiedFree": true,
+    "interruptedFixtureAccountsRemaining": 0,
+    "newImmutableArtifact": "dist/perf-api/main-7838b7d8a281e38d43133001c7ec983613b9ddc655ac40e62c02b5d2e5c7e9fb.cjs",
+    "newApiPid": 1013147,
+    "launchedAt": "2026-10-13T05:02:59.982153+00:00",
+    "verifiedListeningAt": "2026-10-13T05:03:00.437Z",
+    "checks": [
+      "Successful listening log and readiness response after an empty port check",
+      "Only one performance API command in the process list",
+      "Runner verifies /proc/PID/cmdline matches immutable artifact path",
+      "Runner verifies artifact SHA-256 matches the launch manifest",
+      "Runner checks metrics process uptime against launch timestamp within five seconds"
+    ]
+  }
+}

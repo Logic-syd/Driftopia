@@ -1,14 +1,20 @@
 name: Quality and game flow
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: driftopia
-          POSTGRES_PASSWORD: driftopia_dev
+          POSTGRES_PASSWORD: ci_ephemeral_password
           POSTGRES_DB: driftopia
         ports: ["5432:5432"]
         options: >-
@@ -17,34 +23,61 @@ jobs:
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql://driftopia:driftopia_dev@localhost:5432/driftopia
+      DATABASE_URL: postgresql://driftopia:ci_ephemeral_password@localhost:5432/driftopia
       REDIS_URL: redis://localhost:6379
       WEB_ORIGINS: http://127.0.0.1:5173,http://localhost:5173,http://localhost:5174
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with: { version: 11.25.0 }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm db:generate && pnpm db:migrate && pnpm db:seed
-      - run: pnpm lint && pnpm test && pnpm build
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: |
-          pnpm dev > /tmp/driftopia-dev.log 2>&1 &
-          for attempt in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:3001/api/health && curl -fsS -o /dev/null http://127.0.0.1:5173; then break; fi
+      - name: Install immutable dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Initialize real database
+        run: pnpm db:generate && pnpm db:migrate && pnpm db:seed
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Start API for integration tests
+        run: |
+          pnpm dev:api > /tmp/driftopia-api.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/api/ready; then break; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:3001/api/health
-      - run: pnpm test:integration
-      - run: pnpm test:e2e
+          curl -fsS http://127.0.0.1:3001/api/ready
+      - name: PostgreSQL concurrency, security and realtime integration
+        run: pnpm test:integration
+      - name: Production build
+        run: pnpm build
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Start game UI
+        run: |
+          pnpm dev:web > /tmp/driftopia-web.log 2>&1 &
+          for attempt in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5173; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:5173
+      - name: Browser acceptance
+        run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: browser-evidence
+          name: test-evidence
           path: |
             test-results/
             docs/screenshots/
-            /tmp/driftopia-dev.log
+            /tmp/driftopia-api.log
+            /tmp/driftopia-web.log
+          retention-days: 7

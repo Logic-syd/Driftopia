@@ -50,6 +50,8 @@ export interface PlayerState {
   id: string;
   name: string;
   role: string;
+  isGuest: boolean;
+  guestExpiresAt: string | null;
   coins: number;
   xp: number;
   level: number;

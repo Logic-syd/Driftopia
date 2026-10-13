@@ -7,3 +7,9 @@ dist
 test-results
 playwright-report
 docs/screenshots
+
+secrets
+backups
+
+__pycache__
+*.pyc

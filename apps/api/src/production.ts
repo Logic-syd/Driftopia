@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type Building, type ProductionJob } from "@prisma/client";
 import {
   BUILDINGS,
   ECONOMY,
@@ -39,29 +39,43 @@ export async function recipes(tx: Tx) {
 // Caller must hold the player's transaction advisory lock. Only persisted jobs
 // can mature offline. Refill starts at now (or the end of the existing queue),
 // never in the past using resources acquired after a player's return.
-export async function settleAutomation(tx: Tx, userId: string, now: Date) {
-  const island = await tx.island.findUniqueOrThrow({
-    where: { userId },
-    include: {
-      buildings: {
+export async function settleAutomation(
+  tx: Tx,
+  userId: string,
+  now: Date,
+  snapshot?: {
+    stock: Bundle;
+    buildings: (Building & { jobs: ProductionJob[] })[];
+  },
+) {
+  const buildings =
+    snapshot?.buildings ??
+    (
+      await tx.island.findUniqueOrThrow({
+        where: { userId },
         include: {
-          jobs: {
-            where: { status: "RUNNING" },
-            orderBy: [{ finishesAt: "asc" }, { id: "asc" }],
+          buildings: {
+            include: {
+              jobs: {
+                where: { status: "RUNNING" },
+                orderBy: [{ finishesAt: "asc" }, { id: "asc" }],
+              },
+            },
           },
         },
-      },
-    },
-  });
-  const inventory = await tx.inventory.findUniqueOrThrow({ where: { userId } });
-  const before = inventory.resources as Bundle;
+      })
+    ).buildings;
+  const before =
+    snapshot?.stock ??
+    ((await tx.inventory.findUniqueOrThrow({ where: { userId } }))
+      .resources as Bundle);
   let stock: Bundle = { ...before };
   const capacity =
     ECONOMY.baseCapacity +
-    island.buildings
+    buildings
       .filter((b) => b.kind === "warehouse")
       .reduce((n, b) => n + ECONOMY.warehouseCapacity * b.level, 0);
-  const active = island.buildings
+  const active = buildings
     .filter((b) => b.autoEnabled)
     .sort((a, b) => a.id.localeCompare(b.id));
   const configs = await recipes(tx);
@@ -173,5 +187,5 @@ export async function settleAutomation(tx: Tx, userId: string, now: Date) {
       },
     });
   }
-  return { states, configs };
+  return { states, configs, changed: collected.length > 0 || jobs.length > 0 };
 }

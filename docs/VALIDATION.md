@@ -1,39 +1,70 @@
-# v0.2 验收记录
+# v0.3 acceptance evidence
 
-验证日期：2026-10-12。Node.js 24.19.0、pnpm 11.25.0、PostgreSQL 17、Redis 7；真实云工作区。
+This report distinguishes current-workspace verification from remote CI and public deployment. The original v0.2 baseline is preserved in [TECHNICAL_AUDIT.md](TECHNICAL_AUDIT.md); changes and corrective reruns are in [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).
 
-| 检查                                                 | 结果               |
-| ---------------------------------------------------- | ------------------ |
-| 冻结锁文件安装、Prisma client 生成                   | 通过               |
-| setup-cloud.sh（v0.1）整体执行、v0.2 迁移重复运行    | 通过；未重置数据库 |
-| 严格 TypeScript                                      | 通过               |
-| ESLint                                               | 通过               |
-| Vitest 单元测试                                      | 7/7 通过           |
-| PostgreSQL 集成测试                                  | 21/21 通过         |
-| Playwright 双账号生产、订单、批量买卖、刷新/重新登录 | 通过               |
-| Playwright 自动续产、刷新收成、关闭保留队列          | 通过               |
-| Playwright Canvas 放置与弹窗防穿透                   | 通过               |
-| 桌面/手机真实截图、移动端无横向溢出                  | 通过               |
-| Web、Admin、API 生产构建                             | 通过               |
-| 编译后的 API 独立启动与数据库/Redis 健康请求         | 通过               |
-| Web 5173、Admin 5174、API 3001 当前实例              | 正常运行           |
+## Environment and reproducibility
 
-新增集成覆盖 72 小时后只结算已排的 30 批、并发状态读取不重复收取、预扣材料、关闭自动保留队列、满仓部分领取与恢复、缺料续排、自动操作所有权、订单轮换、批量购买手续费与幂等。
+Node.js 24.19.0, pnpm 11.25.0, PostgreSQL 17, Redis 7, Prisma 6.19.3, system Chromium. Tests use the real local PostgreSQL service and HTTP API. Browser tests use independent contexts with separate cookies. No mock repository substitutes for transaction verification.
 
-集成测试覆盖资源非负、非法输入、所有权、重复打捞、离线生产、重复领取、建筑重叠、最后一件商品双买家竞争、同 key 重试、撤单与购买竞争、自买自卖、余额不足、满仓领取、订单双领、Redis 重建、管理员权限、跨来源请求、配方快照、交易中途余额溢出引发的全事务回滚、仓库整理幂等。
+```bash
+bash scripts/setup-cloud.sh
+pnpm dev:api
+# In another terminal, after /api/ready succeeds:
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:integration
+pnpm build
+pnpm dev:web
+# In another terminal, after the UI starts:
+pnpm test:e2e
+```
 
-浏览器两个账号分别注册，A 通过界面打捞、建净水器、安排真实 12 秒生产、刷新后收获、交付订单、建码头、再次生产并挂牌淡水；B 建码头一次购买 2 个淡水并显示 14 金币总价，刷新后仓库保留买入资源；A 查看销售流水并重新登录，建筑仍在。另一个浏览器测试使用鼠标直接点击 Phaser 网格建造，并确认操作仓库弹窗没有额外打捞。
+For a standard machine, follow the portable instructions in [README](../README.md); setup-cloud.sh deliberately targets this managed workspace. Playwright normally installs its Chromium build with `pnpm exec playwright install --with-deps chromium`; this workspace used the configured system Chromium fallback.
 
-## 已知边界
+## Automated checks
 
-- Phaser 独立构建 chunk 约 1.2 MB（gzip 约 332 KB），触发 Vite 大包提示；未进行移动设备网络性能基准。
-- 当前 pg 8.x 在 Prisma 内部查询调度时产生弃用提示；测试无失败，升级 pg 9 前须验证 Prisma adapter 兼容性。
-- GitHub Actions / GHCR 发布模板已编写，未在远端执行。Docker 基础服务已运行；生产应用镜像尚未发布或做公网验证。
-- 环境安装/启动指令已保存草稿；没有声称完成环境发布或新任务快照恢复验证。
-- 完整游戏内容、长期经济平衡与扩容事项见 ROADMAP.md 和 ECONOMY.md。
+| Check                                                                  | Result                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Frozen lockfile install; Prisma generation; repeat migration execution | Passed after dependency upgrade; existing databases preserved                                                                                                                                                            |
+| ESLint, strict TypeScript, production build                            | Passed: `pnpm lint`, `pnpm typecheck`, `pnpm build` (web, admin and API)                                                                                                                                                 |
+| Unit tests                                                             | **14/14 passed**, zero skipped: 8 engine and 6 client transport/refresh                                                                                                                                                  |
+| PostgreSQL / HTTP / Socket integration                                 | **55/55 passed**, zero skipped, 15.67 seconds: 37 economy, 14 realtime/security, 4 auth/maintenance                                                                                                                      |
+| Playwright                                                             | **8/8 passed, zero skipped**, about 1.8 minutes: 6 browser scenarios and 2 notification protocol checks                                                                                                                  |
+| Dependency audit                                                       | `pnpm audit --prod --audit-level high --json`: zero reported advisories at every severity after Prisma upgrade and scoped deepmerge-ts override                                                                          |
+| Production image + isolated HTTPS + backup restore                     | Passed: strict TLS game loop (26.02 seconds), owner-role migrations, backup/restore with 11 table-content hashes equal, Redis recovery without API restart, protected Prometheus scrape; see [OPERATIONS](OPERATIONS.md) |
+| Remote GitHub Actions                                                  | **Not verified**: GitHub API access returned HTTP 403 in this environment                                                                                                                                                |
+| Public HTTPS demo                                                      | **Not deployed**: user confirmed no server/domain is available                                                                                                                                                           |
 
-## v0.2 回归结果
+Tests that initially failed during implementation were diagnosed and rerun; they are not described as successful initial executions. In particular, development API restart, a refresh waiter starvation bug, and a test-wrapper TypeScript error were corrected before final validation.
 
-本次共 31 个测试通过：7 个单元、21 个真实 PostgreSQL 集成、3 个 Chromium 浏览器测试。浏览器测试耗时约 65 秒，实际等待净水器生产，未改服务器时间。自动模式刷新后按时收取，关闭开关保留剩余 30 批；已读收成刷新后保持关闭。手机宽度 390 px 下完成 2 个淡水批量购买与自动生产开关操作，无横向溢出。桌面与手机操作截图见 `docs/screenshots/automation.png`、`automation-mobile.png`、`market-mobile.png`。
+## Requested acceptance A–F
 
-严格类型、ESLint、Web/Admin/API 构建均通过。新迁移及全部旧迁移重复执行无副作用；编译 API 在独立 3002 端口启动验证 PostgreSQL/Redis 连通性后退出，开发实例仍使用 3001。
+| Test                       | Status and evidence                                                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — Complete game loop     | **Passed in browser**: register, initial persisted base, salvage, construct, produce, collect, fulfil order, upgrade and expand. The tutorial follows five real progress milestones.                                                                                |
+| B — Real multiplayer trade | **Passed in independent browser contexts**: seller escrows 2 water at 7 coins each; buyer loses 14, seller gains 13 after fee, buyer gains 2 water; transaction history and subsequent reload agree. Socket notification refreshes seller assets.                   |
+| C — Last-item concurrency  | **Passed against real PostgreSQL and HTTP**: 20 concurrent requests, exactly one purchase and 19 sold-out responses; balances, escrow, inventory and fee remain consistent. Other races cover repeat production collection, build/trade competition and cancel/buy. |
+| D — Offline recovery       | **Passed in browser**: enqueue production, perform real logout, wait for server completion, log in, recover and collect. PG tests also cover bounded 72-hour offline automatic queues and concurrent settlement.                                                    |
+| E — Automated delivery     | **Partial**: all local CI-equivalent quality checks and isolated production HTTPS deployment passed; remote CI has not been verified. A committed workflow is not evidence that GitHub ran it successfully.                                                         |
+| F — Public demo            | **Incomplete**: no public deployment resources. An isolated HTTPS smoke test does not satisfy public browser acceptance.                                                                                                                                            |
+
+The browser suite also covers mobile layout, Canvas hit-testing, real persistent guest play, friend online/offline state and read-only visits, leaderboard display, owned-listing cancellation, failed-action feedback, reconnection and loss of network. Five actual browser captures are committed under [screenshots](screenshots/).
+
+## Consistency and recovery coverage
+
+Real database tests exercise 20-way final-unit buying, repeated reward collection, sorted-player locking during build/trade races, buyer/cancel contention, dropped HTTP responses retried with the same key, and PostgreSQL failure after part of a settlement followed by rollback and same-key recovery. Canonical fingerprints accept object-key reordering and reject changed intent. Expired receipts retain tombstones; old requests never execute again.
+
+Authorization cases cover another player's buildings/jobs/listings/islands, forged rewards, admin endpoints, session expiry/revocation, authentication route aliases, socket origins/rooms/limits and a connection closed during asynchronous authentication. Public market cache tests perform all create/buy/cancel mutations through the actual API and immediately verify the refreshed list.
+
+## Performance and limits
+
+Measurements and raw result files are in [PERFORMANCE](PERFORMANCE.md). Final verified runs share the same immutable bundle and checked PID: 100 users completed 2,700/2,700 requests; 500 users completed 13,500/13,500, with zero HTTP/socket errors and conserved assets. Steady-read throughput was 69.991 / 349.907 requests per second, p95 21.950 / 897.283 ms respectively. At 500 users, production-claim p95 remained 4,382.524 ms and market-buy p95 5,920.705 ms; this does not demonstrate uniformly smooth gameplay under mass writes.
+
+Original exploratory measurements, their runtime-provenance correction and an excluded interrupted run are retained. They are not a controlled causal comparison with the final build. These short tests share one machine with their database and generator, omit browser refresh amplification and TLS, and do not establish public production capacity or a long-duration SLO.
+
+- Phaser's production chunk remains approximately 1.2 MB before compression and emits Vite's chunk-size advisory. Real low-end mobile hardware and slow-network frame times remain unmeasured.
+- pg 8.x emits a concurrent-query deprecation warning through the Prisma adapter. Current tests pass; pg 9 compatibility requires verification before upgrade.
+- Presence, rate limits and public-market cache are single-process. Horizontal replicas need shared rate counters, Socket.IO coordination and cache invalidation.
+- Visual day/night does not change the economy. Friend relationships are one-way bookmarks; visits are read-only. Advanced weather, exploration, residents and cooperative events remain deferred.
+- No remote error tracking service, external penetration test, long-term balance study or novice five-minute completion study is claimed.

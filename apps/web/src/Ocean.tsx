@@ -3,8 +3,12 @@ import Phaser from "phaser";
 import { useGame, type Placement } from "./store";
 import {
   BUILDINGS,
+  ECONOMY,
+  RESOURCES,
+  type Resource,
   type BuildingKind,
 } from "../../../packages/game-config/src/index";
+import { reducedMotion } from "./feedback";
 import type { PlayerState } from "../../../packages/shared/src/index";
 const TILE_W = 104,
   TILE_H = 52;
@@ -14,7 +18,7 @@ type SceneData = {
   placement: Placement;
   onTile: (x: number, y: number) => void;
   onBuilding: (id: string) => void;
-  onSalvage: (id: string) => void;
+  onSalvage: (id: string) => Promise<boolean>;
 };
 const points = (values: number[][]) =>
   values.map(([x, y]) => new Phaser.Geom.Point(x, y));
@@ -32,12 +36,22 @@ export class OceanScene extends Phaser.Scene {
     phase: number;
   }[] = [];
   zoom = 1;
+  targetZoom = 1;
+  displayPanX = 0;
+  displayPanY = 0;
+  ghost: Phaser.GameObjects.Container | null = null;
+  productionBubbles: {
+    object: Phaser.GameObjects.Graphics;
+    y: number;
+    phase: number;
+  }[] = [];
+  salvageOrigin: { x: number; y: number } | null = null;
   panX = 0;
   panY = 0;
   dragStart: { x: number; y: number; px: number; py: number } | null = null;
   moved = false;
   lastPinch = 0;
-  reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  reduced = reducedMotion();
   constructor(dataRef: { current: SceneData }) {
     super("ocean");
     this.dataRef = dataRef;
@@ -52,12 +66,13 @@ export class OceanScene extends Phaser.Scene {
       this.moved = false;
     });
     this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (this.dataRef.current.placement) this.previewPlacement(p);
       const p1 = this.input.pointer1,
         p2 = this.input.pointer2;
       if (p1.isDown && p2.isDown) {
         const distance = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
         if (this.lastPinch)
-          this.setZoom((this.zoom * distance) / this.lastPinch);
+          this.setZoom((this.targetZoom * distance) / this.lastPinch);
         this.lastPinch = distance;
         this.moved = true;
         return;
@@ -85,22 +100,23 @@ export class OceanScene extends Phaser.Scene {
     this.input.on(
       "wheel",
       (_p: unknown, _o: unknown, _dx: number, dy: number) =>
-        this.setZoom(this.zoom * (dy > 0 ? 0.94 : 1.06)),
+        this.setZoom(this.targetZoom * (dy > 0 ? 0.94 : 1.06)),
     );
     this.scale.on("resize", () => this.redraw());
     this.redraw();
     this.game.events.on("zoom", (delta: number) =>
-      this.setZoom(this.zoom + delta),
+      this.setZoom(this.targetZoom + delta),
     );
     this.game.events.on("reset", () => {
-      this.zoom = 1;
+      this.targetZoom = 1;
       this.panX = 0;
       this.panY = 0;
       this.positionWorld();
     });
   }
   setZoom(value: number) {
-    this.zoom = Phaser.Math.Clamp(value, 0.5, 1.8);
+    this.targetZoom = Phaser.Math.Clamp(value, 0.5, 1.8);
+    if (this.reduced) this.zoom = this.targetZoom;
     this.positionWorld();
   }
   positionWorld() {
@@ -109,8 +125,8 @@ export class OceanScene extends Phaser.Scene {
     const base = w < 700 ? 0.76 : 1.17;
     this.world
       .setPosition(
-        w * (w < 1000 ? 0.5 : 0.53) + this.panX,
-        h * 0.49 + this.panY,
+        w * (w < 1000 ? 0.5 : 0.53) + this.displayPanX,
+        h * 0.49 + this.displayPanY,
       )
       .setScale(base * this.zoom);
   }
@@ -118,11 +134,17 @@ export class OceanScene extends Phaser.Scene {
     const w = this.scale.width,
       h = this.scale.height;
     this.sea.clear();
+    const night =
+      Math.floor((Date.now() + useGame.getState().offset) / 240000) % 2 === 1;
     for (let i = 0; i < 40; i++) {
       const t = i / 40;
       const color = Phaser.Display.Color.Interpolate.ColorWithColor(
-        new Phaser.Display.Color(98, 185, 192),
-        new Phaser.Display.Color(41, 145, 164),
+        night
+          ? new Phaser.Display.Color(58, 111, 144)
+          : new Phaser.Display.Color(98, 185, 192),
+        night
+          ? new Phaser.Display.Color(36, 93, 122)
+          : new Phaser.Display.Color(41, 145, 164),
         40,
         i,
       );
@@ -130,6 +152,19 @@ export class OceanScene extends Phaser.Scene {
         Phaser.Display.Color.GetColor(color.r, color.g, color.b),
       );
       this.sea.fillRect(0, t * h, w, h / 40 + 1);
+    }
+    if (night) {
+      this.sea.fillStyle(0xe9efcd, 0.8);
+      this.sea.fillCircle(w * 0.78, h * 0.18, 16);
+      this.sea.fillStyle(0x50788d);
+      this.sea.fillCircle(w * 0.785, h * 0.174, 14);
+      this.sea.fillStyle(0xe9efcd, 0.45);
+      for (let i = 0; i < 22; i++)
+        this.sea.fillCircle(
+          (i * 197 + 80) % w,
+          70 + ((i * 31) % (h * 0.2)),
+          i % 3 === 0 ? 1.5 : 0.8,
+        );
     }
     this.sea.fillStyle(0xb2e4d7, 0.15);
     this.sea.fillEllipse(w * 0.23, h * 0.43, w * 0.82, h * 0.8);
@@ -165,10 +200,147 @@ export class OceanScene extends Phaser.Scene {
   iso(x: number, y: number) {
     return { x: ((x - y) * TILE_W) / 2, y: ((x + y) * TILE_H) / 2 };
   }
+  canPlace(x: number, y: number) {
+    const { state, placement } = this.dataRef.current;
+    if (!state || !placement || Math.abs(x) > 8 || Math.abs(y) > 8)
+      return false;
+    const exists = state.tiles.some((t) => t.x === x && t.y === y);
+    const occupied = state.buildings.some(
+      (b) => b.x === x && b.y === y && b.id !== placement.movingId,
+    );
+    const validTile =
+      placement.kind === "floor"
+        ? !exists &&
+          state.tiles.some((t) => Math.abs(t.x - x) + Math.abs(t.y - y) === 1)
+        : exists && !occupied;
+    if (!validTile) return false;
+    if (placement.movingId) return true;
+    const cost =
+      placement.kind === "floor"
+        ? ECONOMY.floorCost
+        : BUILDINGS[placement.kind].cost;
+    return (
+      Object.entries(cost).every(
+        ([r, n]) => (state.inventory[r as Resource] ?? 0) >= n,
+      ) &&
+      (placement.kind === "floor" ||
+        state.coins >= BUILDINGS[placement.kind].coins)
+    );
+  }
+  previewPlacement(pointer: Phaser.Input.Pointer) {
+    this.ghost?.destroy();
+    this.ghost = null;
+    const { placement, blocked } = this.dataRef.current;
+    if (!placement || blocked || this.moved) return;
+    const localX = (pointer.x - this.world.x) / this.world.scaleX;
+    const localY = (pointer.y - this.world.y) / this.world.scaleY;
+    const x = Math.round(localX / TILE_W + localY / TILE_H);
+    const y = Math.round(localY / TILE_H - localX / TILE_W);
+    const position = this.iso(x, y),
+      valid = this.canPlace(x, y);
+    const ghost = this.add.container(position.x, position.y);
+    const g = this.add.graphics();
+    g.fillStyle(valid ? 0xc9f4bd : 0xf5a29b, 0.65);
+    g.fillPoints(
+      points([
+        [0, -26],
+        [51, 0],
+        [0, 26],
+        [-51, 0],
+      ]),
+      true,
+    );
+    g.lineStyle(2, valid ? 0xf4ffe9 : 0xb85149, 0.9);
+    g.strokePoints(
+      points([
+        [0, -26],
+        [51, 0],
+        [0, 26],
+        [-51, 0],
+      ]),
+      true,
+    );
+    ghost.add(g);
+    ghost.add(
+      this.add
+        .text(
+          0,
+          -34,
+          placement.kind === "floor" ? "＋" : BUILDINGS[placement.kind].icon,
+          { fontSize: "36px" },
+        )
+        .setOrigin(0.5)
+        .setAlpha(0.72),
+    );
+    ghost.add(
+      this.add
+        .text(0, 38, valid ? "✓ 可以放置" : "× 位置或材料不足", {
+          fontSize: "11px",
+          color: valid ? "#244d35" : "#852f29",
+          backgroundColor: valid ? "#e5f9d5" : "#ffe7df",
+          padding: { x: 5, y: 4 },
+        })
+        .setOrigin(0.5),
+    );
+    this.world.add(ghost);
+    this.ghost = ghost;
+  }
+  resourceFeedback(before: PlayerState | null, after: PlayerState | null) {
+    if (!before || !after || before.id !== after.id) return;
+    const gains = Object.entries(after.inventory).filter(
+      ([id, n]) => n > (before.inventory[id as Resource] ?? 0),
+    );
+    gains.slice(0, 4).forEach(([id, n], index) => {
+      const resource = RESOURCES[id as Resource];
+      const origin = this.salvageOrigin ?? {
+        x: this.world.x,
+        y: this.world.y - 70,
+      };
+      const target = document
+        .querySelector<HTMLElement>(
+          `.resource-bar button[title="${resource.name}"]`,
+        )
+        ?.getBoundingClientRect();
+      const label = this.add
+        .text(
+          origin.x + index * 30,
+          origin.y,
+          `${resource.icon} +${n - (before.inventory[id as Resource] ?? 0)}`,
+          {
+            fontFamily: "sans-serif",
+            fontSize: "19px",
+            color: "#fffde8",
+            backgroundColor: "#356e62",
+            padding: { x: 8, y: 5 },
+          },
+        )
+        .setOrigin(0.5)
+        .setDepth(100);
+      if (this.reduced) {
+        this.time.delayedCall(500, () => label.destroy());
+        return;
+      }
+      this.tweens.add({
+        targets: label,
+        x: target ? target.x + target.width / 2 : this.scale.width / 2,
+        y: target ? target.y + target.height / 2 : 90,
+        alpha: 0.15,
+        scale: 0.7,
+        delay: index * 70,
+        duration: 850,
+        ease: "Cubic.easeInOut",
+        onComplete: () => label.destroy(),
+      });
+    });
+    if (gains.length) this.salvageOrigin = null;
+  }
   redraw() {
+    this.resourceFeedback(this.lastState, this.dataRef.current.state);
     this.drawSea();
     this.world.removeAll(true);
     this.floating = [];
+    this.productionBubbles = [];
+    this.ghost = null;
     this.positionWorld();
     const { state, placement } = this.dataRef.current;
     this.lastState = state;
@@ -207,12 +379,7 @@ export class OceanScene extends Phaser.Scene {
     for (const t of targets.sort((a, b) => a.x + a.y - (b.x + b.y))) {
       const pos = this.iso(t.x, t.y);
       const exists = tiles.some((p) => p.x === t.x && p.y === t.y);
-      const occupied = state?.buildings.some(
-        (b) => b.x === t.x && b.y === t.y && b.id !== placement?.movingId,
-      );
-      const valid =
-        placement &&
-        (placement.kind === "floor" ? !exists : exists && !occupied);
+      const valid = this.canPlace(t.x, t.y);
       const g = this.add.graphics({ x: pos.x, y: pos.y });
       if (exists) {
         g.fillStyle(0x8c5e3c);
@@ -319,6 +486,10 @@ export class OceanScene extends Phaser.Scene {
       zone.on("pointerup", (pointer: Phaser.Input.Pointer) => {
         if (!(pointer.event.target instanceof HTMLCanvasElement)) return;
         if (!this.moved && valid) this.dataRef.current.onTile(t.x, t.y);
+        else if (!this.moved && this.dataRef.current.placement)
+          useGame
+            .getState()
+            .notify("这格无法放置，请检查空位、相邻地板和建造材料", "error");
       });
       this.world.add(zone);
     }
@@ -367,6 +538,17 @@ export class OceanScene extends Phaser.Scene {
           })
           .setOrigin(0.5);
         container.add(badge);
+        for (let i = 0; i < 3; i++) {
+          const bubble = this.add.graphics({ x: -15 + i * 15, y: -58 - i * 4 });
+          bubble.fillStyle(ready ? 0xe8f9b1 : 0xbcece1, 0.75);
+          bubble.fillCircle(0, 0, 2.5);
+          container.add(bubble);
+          this.productionBubbles.push({
+            object: bubble,
+            y: bubble.y,
+            phase: i * 2 + b.x,
+          });
+        }
       }
     }
     if (!buildings.some((b) => b.x === 0 && b.y === 0)) {
@@ -452,8 +634,32 @@ export class OceanScene extends Phaser.Scene {
       hit.on("pointerup", (pointer: Phaser.Input.Pointer) => {
         if (!(pointer.event.target instanceof HTMLCanvasElement)) return;
         if (!this.moved) {
-          this.dataRef.current.onSalvage(s.id);
-          this.tweens.add({ targets: c, alpha: 0, y: c.y - 28, duration: 350 });
+          if (useGame.getState().busy) return;
+          this.salvageOrigin = { x: c.x, y: c.y };
+          void this.dataRef.current.onSalvage(s.id).then((ok) => {
+            if (!ok) {
+              this.salvageOrigin = null;
+              return;
+            }
+            // Only animate a confirmed catch; failed actions leave the item visible.
+            const ripple = this.add.graphics({
+              x: (this.scale.width * s.x) / 100,
+              y: (this.scale.height * s.y) / 100,
+            });
+            ripple.lineStyle(2, 0xe9f8ce, 0.8);
+            ripple.strokeEllipse(0, 0, 42, 20);
+            if (this.reduced) {
+              ripple.destroy();
+              return;
+            }
+            this.tweens.add({
+              targets: ripple,
+              scale: 2,
+              alpha: 0,
+              duration: 450,
+              onComplete: () => ripple.destroy(),
+            });
+          });
         }
       });
       c.add(hit);
@@ -644,6 +850,12 @@ export class OceanScene extends Phaser.Scene {
     return c;
   }
   update(time: number) {
+    this.reduced = reducedMotion();
+    const smooth = this.reduced ? 1 : 0.28;
+    this.zoom = Phaser.Math.Linear(this.zoom, this.targetZoom, smooth);
+    this.displayPanX = Phaser.Math.Linear(this.displayPanX, this.panX, smooth);
+    this.displayPanY = Phaser.Math.Linear(this.displayPanY, this.panY, smooth);
+    this.positionWorld();
     this.input.enabled = !this.dataRef.current.blocked;
     if (
       this.dataRef.current.state !== this.lastState ||
@@ -658,12 +870,19 @@ export class OceanScene extends Phaser.Scene {
       const x =
           ((i * 173 + (!this.reduced ? time * 0.004 : 0)) % (w + 60)) - 30,
         y = (i * 137) % h;
-      const wave = Math.sin(time * 0.0007 + i) * 2;
+      const wave = this.reduced ? 0 : Math.sin(time * 0.0007 + i) * 2;
       this.foam.beginPath();
       this.foam.moveTo(x, y);
       this.foam.lineTo(x + 9, y + wave);
       this.foam.lineTo(x + 19, y);
       this.foam.strokePath();
+    }
+    for (const bubble of this.productionBubbles) {
+      bubble.object.y =
+        bubble.y - (this.reduced ? 0 : (time * 0.013 + bubble.phase * 6) % 18);
+      bubble.object.alpha = this.reduced
+        ? 0.7
+        : 0.4 + Math.sin(time * 0.002 + bubble.phase) * 0.3;
     }
     if (!this.reduced)
       for (const f of this.floating)
@@ -683,7 +902,7 @@ export function Ocean() {
     placement,
     onTile: () => {},
     onBuilding: () => {},
-    onSalvage: () => {},
+    onSalvage: async () => false,
   });
   dataRef.current = {
     blocked: !state || !!panel || !!selected,
@@ -693,9 +912,9 @@ export function Ocean() {
       if (!dataRef.current.blocked)
         useGame.setState({ selected: id, panel: null });
     },
-    onSalvage: (id) => {
-      if (dataRef.current.blocked) return;
-      void useGame.getState().action("/game/salvage", { spawnId: id });
+    onSalvage: async (id) => {
+      if (dataRef.current.blocked) return false;
+      return useGame.getState().action("/game/salvage", { spawnId: id });
     },
     onTile: (x, y) => {
       if (dataRef.current.blocked) return;
@@ -782,7 +1001,7 @@ export function Ocean() {
               : placement.kind === "floor"
                 ? "扩建木筏"
                 : `建造${BUILDINGS[placement.kind].name}`}{" "}
-            · 点击发光的地板
+            · 绿色可放置，红色需调整
           </span>
           <button onClick={() => useGame.setState({ placement: null })}>
             取消
