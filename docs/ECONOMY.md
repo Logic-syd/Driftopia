@@ -1,5 +1,7 @@
 # 初期经济与模拟
 
+本页保留早期模型及其局限。Phase 3A 新增的有限会话、真实订单轮转、预付离线队列与探索模拟见 [ECONOMY_BALANCE_REPORT.md](ECONOMY_BALANCE_REPORT.md)，执行 `pnpm economy:phase3`。下方旧数据不可用作当前版本的成长预测。
+
 ## 数据源
 
 唯一基础配置：`packages/game-config/src/index.ts`。资源奖励、配方输入/输出、生产时长、成本、等级阈值、容量和市场费率都从此处读取。后台配方版本/订单奖励存数据库，新任务创建时读取，已经开始的任务保留自己的快照。

@@ -2,6 +2,8 @@
 
 当前仓库包含可自托管的生产交付流程。**公网演示尚未部署**：本次环境没有可使用的服务器、域名 DNS、SSH 部署凭据或已配置的 GitHub `production` environment。`play.example.com` 仅为占位符。容器验证结果与公网部署状态分开记录在 [OPERATIONS.md](OPERATIONS.md)。
 
+v0.4 / Phase 3A 新增 `202610150001_exploration` 迁移、三个研究订单及 Ship/Expedition 运行角色权限。升级时沿用下述备份 → migrate → seed → grants → readiness 流程，不删除卷。当前 v0.4 已在开发 PostgreSQL 验证迁移与游戏回归；[OPERATIONS.md](OPERATIONS.md) 中的容器 HTTPS/备份演练是 v0.3 历史证据，本轮没有重新构建并部署生产容器，也未验证远程 CI。发布 v0.4 前需要再次执行目标环境演练。
+
 ## 运行模型
 
 单台 Linux 主机 + Docker Engine / Compose v2.24.4 或更新版本。建议从 4 vCPU / 4 GB RAM 起步；这是容器资源预算建议，不代表已验证的在线承载量，真实负载测试见性能报告。

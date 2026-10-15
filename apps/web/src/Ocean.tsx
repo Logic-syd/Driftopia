@@ -9,12 +9,15 @@ import {
   type BuildingKind,
 } from "../../../packages/game-config/src/index";
 import { reducedMotion } from "./feedback";
+import { useExploration } from "./exploration-store";
+import type { ExplorationState } from "../../../packages/shared/src/exploration";
 import type { PlayerState } from "../../../packages/shared/src/index";
 const TILE_W = 104,
   TILE_H = 52;
 type SceneData = {
   blocked: boolean;
   state: PlayerState | null;
+  exploration: ExplorationState | null;
   placement: Placement;
   onTile: (x: number, y: number) => void;
   onBuilding: (id: string) => void;
@@ -29,6 +32,7 @@ export class OceanScene extends Phaser.Scene {
   foam!: Phaser.GameObjects.Graphics;
   worldObjects: Phaser.GameObjects.GameObject[] = [];
   lastState: PlayerState | null = null;
+  lastExploration: ExplorationState | null = null;
   lastPlacement: Placement = null;
   floating: {
     object: Phaser.GameObjects.Container;
@@ -344,6 +348,7 @@ export class OceanScene extends Phaser.Scene {
     this.positionWorld();
     const { state, placement } = this.dataRef.current;
     this.lastState = state;
+    this.lastExploration = this.dataRef.current.exploration;
     this.lastPlacement = placement;
     this.game.canvas.dataset.mode = placement?.kind ?? "idle";
     const tiles =
@@ -665,9 +670,113 @@ export class OceanScene extends Phaser.Scene {
       c.add(hit);
       this.floating.push({ object: c, y: c.y, phase: s.x });
     }
+    this.drawMooredFleet();
     // Clean floating items from previous state snapshots.
     for (const obj of this.worldObjects) obj.destroy();
     this.worldObjects = this.floating.map((f) => f.object);
+  }
+  drawMooredFleet() {
+    const { state, exploration } = this.dataRef.current;
+    if (!state || !exploration) return;
+    const moored = exploration.ships.filter(
+      (ship) =>
+        !ship.activeVoyageId ||
+        exploration.voyages.some(
+          (v) => v.id === ship.activeVoyageId && v.phase === "ready",
+        ),
+    );
+    const shore =
+      Math.max(...state.tiles.map((tile) => this.iso(tile.x, tile.y).y)) + 100;
+    moored.forEach((ship, index) => {
+      const c = this.add.container(
+        (index - (moored.length - 1) / 2) * 112,
+        shore,
+      );
+      const g = this.add.graphics();
+      g.fillStyle(0x255f66, 0.2);
+      g.fillEllipse(0, 13, 88, 29);
+      g.lineStyle(1, 0xc2e4d7, 0.5);
+      g.strokeEllipse(0, 13, 100, 34);
+      g.fillStyle(ship.kind === "salvager" ? 0x779fa4 : 0xba8957);
+      g.fillPoints(
+        points([
+          [-42, 0],
+          [-24, -13],
+          [34, -9],
+          [44, 1],
+          [25, 17],
+          [-26, 19],
+        ]),
+        true,
+      );
+      g.fillStyle(0xe5c99a);
+      g.fillPoints(
+        points([
+          [-35, -1],
+          [-23, -8],
+          [31, -5],
+          [33, 2],
+          [20, 10],
+          [-24, 11],
+        ]),
+        true,
+      );
+      g.lineStyle(4, 0x9b7952);
+      g.lineBetween(-15, -7, -15, 12);
+      g.lineBetween(12, -6, 12, 12);
+      if (ship.kind === "sailboat") {
+        g.lineStyle(3, 0x715e46);
+        g.lineBetween(0, 5, 0, -56);
+        g.fillStyle(0xf7ecc5);
+        g.fillTriangle(3, -52, 3, 0, 31, -5);
+        g.fillStyle(0xb8d9c5);
+        g.fillTriangle(-3, -43, -3, 0, -25, -4);
+      } else if (ship.kind === "salvager") {
+        g.fillStyle(0xb5d1c1);
+        g.fillRoundedRect(-24, -27, 23, 24, 3);
+        g.fillStyle(0x4f7882);
+        g.fillRect(-19, -23, 13, 9);
+        g.lineStyle(3, 0x526f6d);
+        g.lineBetween(16, -6, 16, -37);
+        g.lineBetween(16, -37, 36, -23);
+        g.lineBetween(36, -23, 36, -8);
+      } else {
+        g.lineStyle(3, 0xe3c492);
+        g.lineBetween(-13, 6, -36, 28);
+        g.lineBetween(12, 3, 34, -19);
+      }
+      c.add(g);
+      c.add(
+        this.add
+          .text(
+            0,
+            31,
+            `${ship.name} · ${ship.activeVoyageId ? "待卸货" : "停泊中"}`,
+            {
+              fontFamily: "sans-serif",
+              fontSize: "10px",
+              color: "#ecf3db",
+              backgroundColor: "#3e7b78",
+              padding: { x: 6, y: 4 },
+            },
+          )
+          .setOrigin(0.5),
+      );
+      const hit = this.add
+        .zone(0, 2, 90, 67)
+        .setInteractive({ useHandCursor: true });
+      hit.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+        if (
+          pointer.event.target instanceof HTMLCanvasElement &&
+          !this.moved &&
+          !this.dataRef.current.blocked &&
+          !this.dataRef.current.placement
+        )
+          useGame.getState().setPanel("exploration");
+      });
+      c.add(hit);
+      this.world.add(c);
+    });
   }
   drawCamper(x: number, y: number) {
     const c = this.add.container(x, y);
@@ -858,8 +967,10 @@ export class OceanScene extends Phaser.Scene {
     this.positionWorld();
     this.input.enabled = !this.dataRef.current.blocked;
     if (
-      this.dataRef.current.state !== this.lastState ||
-      this.dataRef.current.placement !== this.lastPlacement
+      !this.input.activePointer.isDown &&
+      (this.dataRef.current.state !== this.lastState ||
+        this.dataRef.current.exploration !== this.lastExploration ||
+        this.dataRef.current.placement !== this.lastPlacement)
     )
       this.redraw();
     const w = this.scale.width,
@@ -896,9 +1007,13 @@ export function Ocean() {
     placement = useGame((s) => s.placement),
     panel = useGame((s) => s.panel),
     selected = useGame((s) => s.selected);
+  const exploration = useExploration((s) =>
+    s.ownerId === state?.id ? s.data : null,
+  );
   const dataRef = useRef<SceneData>({
     blocked: true,
     state,
+    exploration,
     placement,
     onTile: () => {},
     onBuilding: () => {},
@@ -907,6 +1022,7 @@ export function Ocean() {
   dataRef.current = {
     blocked: !state || !!panel || !!selected,
     state,
+    exploration,
     placement,
     onBuilding: (id) => {
       if (!dataRef.current.blocked)
@@ -964,7 +1080,7 @@ export function Ocean() {
     const scene = game.scene.getScene("ocean") as OceanScene;
     scene.input.enabled = !dataRef.current.blocked;
     if (scene.world && !scene.input.activePointer.isDown) scene.redraw();
-  }, [state, placement, panel, selected]);
+  }, [state, exploration, placement, panel, selected]);
   return (
     <>
       <div

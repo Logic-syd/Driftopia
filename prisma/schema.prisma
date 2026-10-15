@@ -30,6 +30,8 @@ model User {
   followers    Friendship[]        @relation("Followed")
   events       GameEvent[]
   idempotency  IdempotencyRecord[]
+  ships        Ship[]
+  expeditions  Expedition[]
 
   @@index([isGuest, createdAt])
 }
@@ -243,4 +245,42 @@ model GameConfigVersion {
   createdAt DateTime @default(now())
 
   @@index([scope, id])
+}
+
+
+model Ship {
+  id          String       @id @default(uuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind        String
+  level       Int          @default(1)
+  durability  Int          @default(100)
+  createdAt   DateTime     @default(now())
+  expeditions Expedition[]
+
+  @@unique([userId, kind])
+  @@unique([id, userId])
+}
+
+model Expedition {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shipId      String
+  ship        Ship      @relation(fields: [shipId, userId], references: [id, userId], onDelete: Cascade)
+  regionId    String
+  status      String    @default("SAILING")
+  departedAt  DateTime
+  arrivesAt   DateTime
+  returnsAt   DateTime?
+  choiceId    String?
+  snapshot    Json
+  outcomes    Json
+  result      Json?
+  resolvedAt  DateTime?
+  claimedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, status, createdAt])
+  @@index([userId, regionId, status])
 }

@@ -9,3 +9,4 @@ prisma/schema.prisma
 # Applied SQL checksums and raw measurement artifacts must stay immutable.
 prisma/migrations/
 docs/performance/
+docs/economy-phase3/

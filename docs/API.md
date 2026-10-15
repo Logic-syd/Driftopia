@@ -1,10 +1,10 @@
-# HTTP and realtime API — v0.3.0
+# HTTP and realtime API — v0.4.0
 
 The base path is `/api`. HTTP bodies are JSON except Prometheus metrics. Browser authentication uses the `driftopia_session` HttpOnly cookie; credentials are included in same-origin requests. Production cookies are `Secure` and `SameSite=Lax`. Allowed browser origins are configured explicitly in `WEB_ORIGINS`. API responses set `Cache-Control: no-store`.
 
 ## Commands and retries
 
-Game actions, market writes, friend additions and economic configuration changes require a UUID `Idempotency-Key` header. Reuse it for a retry of the same operation and arguments; generate a new key only for a new intent. Authentication and the administrator's cache-rebuild command do not use economic command receipts.
+Game actions, exploration commands, market writes, friend additions and economic configuration changes require a UUID `Idempotency-Key` header. Reuse it for a retry of the same operation and arguments; generate a new key only for a new intent. Authentication and the administrator's cache-rebuild command do not use economic command receipts.
 
 ```http
 POST /api/market/11111111-1111-4111-8111-111111111111/buy
@@ -70,6 +70,26 @@ Guest mode never bypasses inventory, market or production rules. Guests have no 
 Buildings return `autoEnabled`, `autoStatus` (`off`, `running`, `warehouse_full`, `materials`), effective `recipe` and persisted `jobs`. The latest `productionReport` contains `id`, `batches`, `resources` and `createdAt`. It describes an already committed harvest; opening/dismissing it grants nothing.
 
 Automatic queues contain at most thirty pending batches and reserve inputs immediately. Only persisted jobs mature while offline. Refill starts at current server time or the existing queue end, never retroactively. Enabling automation prevents manual enqueue; disabling it preserves all prepaid jobs. Collection leaves batches that cannot fit in the warehouse.
+
+## Exploration
+
+All endpoints require the session. Command bodies are strict: unknown properties, including client-supplied rewards, times, durability or prices, return 400. UUIDs select owned entities only; another player's ship or voyage returns 404.
+
+| Method | Path                    | Input / result                                                                                                                              |
+| ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/exploration`          | Read-only, repeatable-read fleet/map snapshot, server time, up to three active voyages and latest twenty completed voyages                  |
+| POST   | `/exploration/build`    | `{kind: "skiff" \| "salvager" \| "sailboat"}`; requires a dock, level, resources and coins; one ship of each kind                           |
+| POST   | `/exploration/upgrade`  | `{shipId}`; idle ship only, maximum level three, retains current durability                                                                 |
+| POST   | `/exploration/repair`   | `{shipId}`; idle damaged ship only, server quotes and charges repair to 100 durability                                                      |
+| POST   | `/exploration/dispatch` | `{shipId, regionId}`; region is `bay`, `wrecks`, `coral`, `storm` or `lost`; charges supplies, coins and base wear, commits hidden outcomes |
+| POST   | `/exploration/choose`   | `{voyageId, choiceId}`; only after arrival; `return` or that event's `venture`, `repair` or `rescue` option                                 |
+| POST   | `/exploration/claim`    | `{voyageId}`; only after return; transfers committed cargo/XP and frees the ship atomically                                                 |
+
+[`ExplorationState`](../packages/shared/src/exploration.ts) is the public contract. Derived phases are `sailing → choice → returning → ready → claimed`. No worker or client tick grants rewards. Arrivals/returns are persisted server timestamps; a client compares its clock with `serverTime` for display and refreshes at boundaries. The ship stays occupied while awaiting a choice or unloading. `WAREHOUSE_FULL` leaves cargo intact; free space and retry. There is no cargo-expiry penalty for being offline.
+
+Events are hidden before arrival. After arrival, the server exposes choice costs, success probabilities, possible extra damage and return duration. Hidden branch outcomes are never returned; only the chosen result becomes public after committing the choice. The safe return option requires no additional resources or durability. Current research resources (`seed`, `alloy`, `relic`) use ordinary inventory, market and order endpoints.
+
+Successful writes send the existing private `state` invalidation, followed by a leaderboard invalidation. Clients refetch exploration and ordinary state after writes/reconnect; notifications contain no loot or private outcome data. No persistent global weather or cooperative event endpoints exist in this release.
 
 ## Market, social and rankings
 

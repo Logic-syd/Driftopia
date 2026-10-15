@@ -15,7 +15,7 @@ const client = new Client({ connectionString: process.env.DATABASE_URL });
     REVOKE ALL ON TABLE "_driftopia_migrations" FROM driftopia;
     GRANT SELECT ON TABLE "_driftopia_migrations" TO driftopia;
     REVOKE UPDATE, DELETE ON TABLE "MarketTransaction", "GameEvent" FROM driftopia;
-    REVOKE DELETE ON TABLE "User" FROM driftopia;
+    REVOKE DELETE ON TABLE "User", "Ship", "Expedition" FROM driftopia;
   `);
   console.log(
     "Application grants applied; migration history and financial audit are protected.",

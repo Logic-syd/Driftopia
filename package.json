@@ -1,7 +1,7 @@
 {
   "name": "driftopia",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packageManager": "pnpm@11.25.0",
   "engines": {
     "node": ">=22"
@@ -23,6 +23,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
     "economy": "tsx scripts/economy.ts",
+    "economy:phase3": "tsx scripts/economy-phase3.ts",
     "maintenance": "tsx scripts/maintenance.ts",
     "perf": "tsx scripts/load-test.ts",
     "perf:leaderboard": "tsx scripts/perf-baseline.ts",

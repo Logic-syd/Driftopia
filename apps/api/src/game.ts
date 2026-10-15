@@ -9,6 +9,7 @@ import {
   BUILDINGS,
   ECONOMY,
   RESOURCES,
+  RESOURCE_IDS,
   SALVAGE,
   type Bundle,
   type BuildingKind,
@@ -33,7 +34,7 @@ import {
 } from "../../../packages/shared/src/index";
 
 type Tx = Prisma.TransactionClient;
-const json = (value: unknown) =>
+export const json = (value: unknown) =>
   JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 export const redis = new Redis(env.REDIS_URL, {
   lazyConnect: true,
@@ -56,7 +57,7 @@ async function lock(tx: Tx, ids: string[]) {
   for (const id of [...new Set(ids)].sort())
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext(${id}))`;
 }
-async function player(tx: Tx, id: string) {
+export async function player(tx: Tx, id: string) {
   const user = await tx.user.findUnique({
     where: { id },
     include: {
@@ -92,13 +93,13 @@ async function player(tx: Tx, id: string) {
         .reduce((n, b) => n + ECONOMY.warehouseCapacity * b.level, 0),
   };
 }
-async function stockUpdate(tx: Tx, id: string, stock: Bundle) {
+export async function stockUpdate(tx: Tx, id: string, stock: Bundle) {
   await tx.inventory.update({
     where: { userId: id },
     data: { resources: json(stock) },
   });
 }
-function checkCoins(coins: number, cost: number) {
+export function checkCoins(coins: number, cost: number) {
   if (coins < cost)
     throw new RuleError("INSUFFICIENT_COINS", "金币不足，先去完成一些委托吧");
 }
@@ -423,16 +424,7 @@ export async function gameAction(
     if (action === "discard") {
       const data = z
         .object({
-          resource: z.enum([
-            "wood",
-            "plastic",
-            "metal",
-            "seaweed",
-            "water",
-            "fish",
-            "plank",
-            "parts",
-          ]),
+          resource: z.enum(RESOURCE_IDS),
           quantity: z.number().int().min(1).max(10000),
         })
         .parse(raw);
@@ -892,32 +884,11 @@ export async function leaderboard(type: string) {
 }
 export const recipeSchema = z.object({
   input: z.partialRecord(
-    z.enum([
-      "wood",
-      "plastic",
-      "metal",
-      "seaweed",
-      "water",
-      "fish",
-      "plank",
-      "parts",
-    ]),
+    z.enum(RESOURCE_IDS),
     z.number().int().min(0).max(100),
   ),
   output: z
-    .partialRecord(
-      z.enum([
-        "wood",
-        "plastic",
-        "metal",
-        "seaweed",
-        "water",
-        "fish",
-        "plank",
-        "parts",
-      ]),
-      z.number().int().min(0).max(100),
-    )
+    .partialRecord(z.enum(RESOURCE_IDS), z.number().int().min(0).max(100))
     .refine((v) => count(v) > 0),
   seconds: z.number().int().min(3).max(86400),
 });

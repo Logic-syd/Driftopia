@@ -1,6 +1,6 @@
 # Driftopia · 漂流乌托邦
 
-**A multiplayer ocean survival and management game built with TypeScript — v0.3.0.** Start with a small raft, salvage materials, run production, fulfil merchant orders and trade resources with other players. The game UI is in Chinese; the engineering documentation below explains the implementation and its limits.
+**A multiplayer ocean survival and management game built with TypeScript — v0.4.0, Phase 3A.** Start with a small raft, salvage materials, run production, fulfil merchant orders, trade with other players and send a fleet into five ocean regions. The game UI is in Chinese; the engineering documentation below explains the implementation and its limits.
 
 The project demonstrates a full-stack product with a server-authoritative economy, real PostgreSQL settlement, reconnectable browser clients and a reproducible test environment. It extends the original game rather than replacing it with a portfolio mockup.
 
@@ -8,19 +8,22 @@ The project demonstrates a full-stack product with a server-authoritative econom
 
 ![Driftopia desktop game — actual application capture](docs/screenshots/desktop.png)
 
+![Phase 3A ocean chart — actual registered-player browser capture](docs/screenshots/exploration-map.png)
+
 <details>
 <summary>Mobile and production screenshots</summary>
 
 <img src="docs/screenshots/mobile.png" alt="Driftopia mobile game" width="300" />
 <img src="docs/screenshots/market-mobile.png" alt="Bulk purchases in the player market" width="300" />
+<img src="docs/screenshots/exploration-mobile.png" alt="A persistent voyage encounter on mobile" width="300" />
 
-[Automatic production](docs/screenshots/automation.png). These screenshots were regenerated from the v0.3.0 browser acceptance run with animation disabled for stable captures.
+[Automatic production](docs/screenshots/automation.png), [shipyard and fleet](docs/screenshots/exploration-fleet.png), [mobile sea chart](docs/screenshots/exploration-map-mobile.png). These screenshots were generated from actual browser acceptance with animation disabled for stable captures.
 
 </details>
 
 ## Playable product
 
-The complete loop is **salvage → build → produce → fulfil orders → expand → trade**.
+The core loop is **salvage → build → produce → fulfil orders → expand → trade**, now joined by **build a boat → explore → choose an encounter → unload → research orders or trade**.
 
 - Register and sign in; the server creates and persists a personal 3×3 raft, inventory and progression. Optional guest entry creates a quota-limited real account with a default 24-hour lifetime.
 - Salvage server-generated resources; place, move and upgrade buildings; expand the raft and warehouse.
@@ -30,8 +33,10 @@ The complete loop is **salvage → build → produce → fulfil orders → expan
 - Search players, bookmark friends, see online presence, view public islands and compare three leaderboards.
 - Follow a five-step introduction, use a placement preview and enjoy a visual day/night cycle; sound is optional and reduced motion is supported.
 - Manage recipe and order-reward versions through a separate role-protected admin application.
+- Build, upgrade and repair three ship types; navigate five regions with server-checked level and route requirements. Fifteen original events offer safe return or a cost/risk decision. Travel continues offline; full warehouses preserve cargo until there is space to unload.
+- Discover seeds, corrosion-resistant alloy and navigation relics. These are real persistent inventory resources used in research orders, shipbuilding and the existing player market.
 
-Friends are currently **one-way bookmarks**, and visits are read-only. Offshore boats and distant islands are scenery. There is no combat, exploration progression, resident simulation or monetization. Long-term economy balance is unfinished; this is a playable engineering portfolio, not a claim of commercial content completeness.
+Friends are currently **one-way bookmarks**, and visits are read-only. The exploration map and fleet are interactive; distant background islands remain scenery. Resident recruitment, advanced production chains, authoritative shared weather and cooperative lighthouse/cleanup activities are planned for Phase 3B–3D. Rescue encounters currently escort sailors to safety; they do not add residents. There is no combat or monetization. Long-term economy balance is unfinished; this is a playable engineering portfolio, not a claim of commercial content completeness. See the [source audit and phased gameplay plan](docs/PHASE3_GAMEPLAY_PLAN.md).
 
 ## Engineering at a glance
 
@@ -80,17 +85,20 @@ On Windows PowerShell, replace `cp .env.example .env` with `Copy-Item .env.examp
 
 For two-player testing, use a normal and a private browser window, register two accounts and build a trading dock on each island. Have one player sell two water at seven coins each; the buyer pays fourteen coins and the seller receives thirteen after the rounded 5% fee.
 
+For a first voyage, build a purifier and trading dock, produce water, then open **探索**. A wooden skiff costs 10 wood, 4 plastic and 25 coins. Dispatch it to 宁静海湾 for 1 water and 2 coins: the first outward leg lasts 30 seconds, then choose an encounter and wait for the return. Logging out during travel preserves the voyage. Choose **安全返航** for no extra cost, unload and inspect the journal and inventory. Complete two bay voyages and reach player level 2 to unlock the wreck field. Existing installations should run `pnpm db:generate`, `pnpm db:migrate` and `pnpm db:seed` after updating; never reset the database.
+
 Administrator access is explicit: register a separate account, set `ADMIN_EMAIL` to its email on the server, then run `pnpm db:seed`. Never reuse development database credentials in a public environment. The [development guide](docs/DEVELOPMENT.md) covers cloud setup, process recovery and migrations.
 
 ## Reliability decisions
 
-| Concern            | Approach                                                                                 | Decision                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Service boundaries | Keep related settlement in one deployable API and database                               | [Modular monolith](docs/ADR/0001-modular-monolith.md)                            |
-| Client trust       | Validate ownership, time, resources, costs and rewards on the server                     | [Server authority](docs/ADR/0002-server-authoritative-economy.md)                |
-| Concurrent trading | Escrow, sorted player locks, listing row lock, conditional decrement, one commit         | [Transactions and retries](docs/ADR/0003-market-transactions-and-idempotency.md) |
-| Cache failure      | Rebuildable rankings and short-lived market views; settlement always rechecks PostgreSQL | [Cache strategy](docs/ADR/0004-disposable-ranking-cache.md)                      |
-| Offline progress   | Persist prepaid jobs and settle finite queues from the server clock                      | [Offline production](docs/ADR/0005-bounded-offline-production.md)                |
+| Concern            | Approach                                                                                                 | Decision                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Service boundaries | Keep related settlement in one deployable API and database                                               | [Modular monolith](docs/ADR/0001-modular-monolith.md)                            |
+| Client trust       | Validate ownership, time, resources, costs and rewards on the server                                     | [Server authority](docs/ADR/0002-server-authoritative-economy.md)                |
+| Concurrent trading | Escrow, sorted player locks, listing row lock, conditional decrement, one commit                         | [Transactions and retries](docs/ADR/0003-market-transactions-and-idempotency.md) |
+| Cache failure      | Rebuildable rankings and short-lived market views; settlement always rechecks PostgreSQL                 | [Cache strategy](docs/ADR/0004-disposable-ranking-cache.md)                      |
+| Offline progress   | Persist prepaid jobs and settle finite queues from the server clock                                      | [Offline production](docs/ADR/0005-bounded-offline-production.md)                |
+| Exploration        | Persist private outcome/rule snapshots at departure; commit choices and cargo under the same player lock | [Restart-safe exploration](docs/ADR/0006-persisted-exploration-decisions.md)     |
 
 A purchase follows this transaction boundary:
 
@@ -121,11 +129,12 @@ pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e          # Also requires the web service
 pnpm economy          # Deterministic economy model, not a load test
+pnpm economy:phase3   # Seeded session/queue/storage model for the delivered exploration slice
 ```
 
-Use a disposable development/test database. Integration fixtures clean up their own records; browser tests may leave accounts for inspection. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` can select an existing system Chromium.
+Use a disposable development/test database. Integration fixtures clean up their own records; browser tests may leave accounts for inspection. Migration regression creates and drops its own uniquely named temporary database, so the test PostgreSQL role needs `CREATEDB` (provided by the development/CI service). Do not grant this capability to the production API role. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` can select an existing system Chromium.
 
-The strategy separates deterministic rule/client transport tests, real-database atomicity/concurrency checks, HTTP/WebSocket security tests and browser gameplay acceptance. Browser acceptance covers real logout/return, two-account asset reconciliation, friends/presence, rankings, guest access, offline recovery and owner listing cancellation; protocol tests cover duplicate/out-of-order notifications. The [validation report](docs/VALIDATION.md) records commands, observed results and incomplete acceptance criteria. The [performance report](docs/PERFORMANCE.md) contains the reproducible 100/500-user workload, completed measurements, hardware and limitations; its numbers are not a cloud capacity guarantee. The [economy model](docs/ECONOMY.md) describes balance problems separately from API throughput.
+The strategy separates deterministic rule/client transport tests, real-database atomicity/concurrency checks, HTTP/WebSocket security tests and browser gameplay acceptance. Browser acceptance covers real logout/return, two-account asset reconciliation, friends/presence, rankings, guest access, offline recovery and owner listing cancellation; protocol tests cover duplicate/out-of-order notifications. Phase 3 adds ship/claim contention, private outcome protection, restart recovery and legacy-save migration checks. The [foundation validation report](docs/VALIDATION.md) and [Phase 3 validation](docs/PHASE3_VALIDATION.md) distinguish executed results and incomplete acceptance criteria. The [performance report](docs/PERFORMANCE.md) contains historical v0.3 100/500-user measurements, hardware and limitations; exploration workload capacity has not been measured. The [Phase 3 economy report](docs/ECONOMY_BALANCE_REPORT.md) models current progression separately from API throughput and supersedes the optimistic assumptions in the [original model](docs/ECONOMY.md).
 
 GitHub Actions defines lint, type checking, unit/integration tests, builds and browser checks. The presence of a workflow file is not evidence of a successful hosted run; final totals and command outcomes are maintained in the validation report. [Deployment](docs/DEPLOYMENT.md) and [operations](docs/OPERATIONS.md) document HTTPS, environment management, resource limits, backup and recovery. [Development records](docs/DEVELOPMENT_LOG.md) distinguish implemented changes from executed checks.
 

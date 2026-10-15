@@ -30,6 +30,11 @@ import {
 import { io } from "socket.io-client";
 import { Ocean } from "./Ocean";
 import {
+  Exploration,
+  ExplorationBridge,
+  ExplorationShortcut,
+} from "./Exploration";
+import {
   api,
   clearSession,
   useGame,
@@ -1614,7 +1619,7 @@ function Preferences() {
       >
         <LogOut size={16} /> {loggingOut ? "正在安全离岛…" : "暂别小岛"}
       </button>
-      <p className="panel-note">Driftopia v0.3 · 原创多人海上生存经营</p>
+      <p className="panel-note">Driftopia v0.4 · 原创多人海上生存经营</p>
     </>
   );
 }
@@ -1630,6 +1635,10 @@ const panels: Record<
   ranking: { title: "群岛风云榜", kicker: "GROW TOGETHER" },
   settings: { title: "慢生活设置", kicker: "MAKE YOURSELF AT HOME" },
   profile: { title: "漂流者档案", kicker: "YOUR STORY AT SEA" },
+  exploration: {
+    title: "航向未知的海",
+    kicker: "A NEW STORY BEYOND THE HORIZON",
+  },
 };
 export default function App() {
   const {
@@ -1731,12 +1740,14 @@ export default function App() {
     { id: "inventory", label: "仓库", icon: Box },
     { id: "orders", label: "委托", icon: Ship },
     { id: "market", label: "集市", icon: ShoppingBag },
+    { id: "exploration", label: "探索", icon: Compass },
     { id: "friends", label: "好友", icon: Users },
     { id: "ranking", label: "排行", icon: Trophy },
   ] as const;
   return (
     <div className="app-shell">
       <Ocean />
+      <ExplorationBridge ownerId={state?.id} />
       <header className="topbar">
         <div className="brand">
           <span className="brand-icon">
@@ -1793,7 +1804,7 @@ export default function App() {
           </>
         ) : (
           <span className="edition">
-            THE FIRST VOYAGE <span>／</span> v0.3
+            THE FIRST VOYAGE <span>／</span> v0.4
           </span>
         )}
       </header>
@@ -1862,6 +1873,7 @@ export default function App() {
               <button onClick={() => useGame.getState().setPanel("inventory")}>
                 <Box size={13} /> {count(state.inventory)} / {state.capacity}
               </button>
+              <ExplorationShortcut ownerId={state.id} />
             </div>
           </div>
           <Guide state={state} />
@@ -1974,7 +1986,9 @@ export default function App() {
             <Modal
               title={panels[panel].title}
               kicker={panels[panel].kicker}
-              wide={["build", "market", "friends"].includes(panel)}
+              wide={["build", "market", "friends", "exploration"].includes(
+                panel,
+              )}
               onClose={() => useGame.getState().setPanel(null)}
             >
               {panel === "build" ? (
@@ -1989,6 +2003,8 @@ export default function App() {
                 <Friends state={state} />
               ) : panel === "ranking" ? (
                 <Ranking />
+              ) : panel === "exploration" ? (
+                <Exploration state={state} />
               ) : panel === "profile" ? (
                 <Profile state={state} />
               ) : (

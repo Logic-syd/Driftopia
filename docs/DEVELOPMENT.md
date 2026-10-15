@@ -17,11 +17,12 @@
 ## 常用开发命令
 
 - `pnpm typecheck` / `pnpm lint` / `pnpm test`
-- `pnpm test:integration`：需要 API 和 PostgreSQL/Redis，真实事务测试，清理仅自己创建的数据。
+- `pnpm test:integration`：需要 API 和 PostgreSQL/Redis，真实事务测试，清理仅自己创建的数据。迁移回归会创建/删除独立临时数据库，测试角色需 `CREATEDB`；开发/CI Compose 的角色已具备，生产 API 角色不应具备。
 - `pnpm test:e2e`：需要 web 和 API，真实浏览器流程；系统 Chromium 用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指定。
 - `pnpm build`：严格类型检查后构建三个应用。
 - `pnpm start:api`：运行构建产物。
 - `pnpm economy`：纯 TS 确定性经济模拟，不修改数据库。
+- `pnpm economy:phase3`：三人群/五种子/五时间点的探索经济模型，含有限离线队列与资源账本；结果与假设见 ECONOMY_BALANCE_REPORT.md。
 - `pnpm format`：统一格式。
 
 ## 数据模型变更

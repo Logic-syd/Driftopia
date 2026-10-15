@@ -7,6 +7,9 @@ export const RESOURCE_IDS = [
   "fish",
   "plank",
   "parts",
+  "seed",
+  "alloy",
+  "relic",
 ] as const;
 export type Resource = (typeof RESOURCE_IDS)[number];
 export type Bundle = Partial<Record<Resource, number>>;
@@ -22,6 +25,9 @@ export const RESOURCES: Record<
   fish: { name: "鲜鱼", icon: "🐟", color: "#edac79" },
   plank: { name: "木板", icon: "🪚", color: "#d49e68" },
   parts: { name: "金属零件", icon: "🔩", color: "#aab4c5" },
+  seed: { name: "海岛种子", icon: "🌰", color: "#86a96d" },
+  alloy: { name: "耐蚀合金", icon: "🔗", color: "#9aa9b5" },
+  relic: { name: "航海遗物", icon: "🏺", color: "#c8a36a" },
 };
 export const BUILDING_IDS = [
   "warehouse",
@@ -204,4 +210,33 @@ export const ORDERS = [
     xp: 40,
     level: 2,
   },
+  {
+    code: "island-seed-study",
+    name: "让失落的绿意重生",
+    description: "海岛种质站 · 研究委托",
+    input: { seed: 3, water: 6 } as Bundle,
+    coins: 90,
+    xp: 45,
+    level: 3,
+  },
+  {
+    code: "alloy-corrosion-study",
+    name: "抵挡盐与时间",
+    description: "海上材料所 · 研究委托",
+    input: { alloy: 2, metal: 2 } as Bundle,
+    coins: 75,
+    xp: 35,
+    level: 2,
+  },
+  {
+    code: "relic-navigation-study",
+    name: "读懂旧航标的方向",
+    description: "群岛档案馆 · 研究委托",
+    input: { relic: 1, plank: 2, water: 4 } as Bundle,
+    coins: 140,
+    xp: 60,
+    level: 5,
+  },
 ];
+
+export * from "./exploration";

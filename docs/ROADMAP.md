@@ -32,6 +32,17 @@ Source implementation, executed tests and a live deployment are different milest
 - Apply additive migrations to existing saves and preserve audit, escrow and command-replay invariants.
 - Do not accept frontend-only rewards, cache-derived balances or socket-only durable state.
 
+## Phase 3 — incremental gameplay delivery
+
+- [x] 3A: three ship types, build/upgrade/repair, five-region interactive map, route progression, fifteen server-generated encounters, durable offline voyages and atomic cargo claims.
+- [x] Integrate seed/alloy/relic with inventory, existing market, three research orders and advanced shipbuilding; preserve previous resources and saves with an additive migration.
+- [ ] 3B: three advanced production chains, building specialization, production overview/bulk claim, residents, unique work assignments and recoverable needs.
+- [ ] 3C: persistent shared weather, visiting merchants and periodic world events; running-job effect snapshots.
+- [ ] 3D: public lighthouse, transactional contributions, communal rewards, cleanup scoring and participation-based rewards.
+- [ ] 3E completion: resident/weather animation, device profiling and full seven-day balance across all systems. The current scoped simulation only covers implemented 3A and foundation systems.
+
+See [the source-based plan](PHASE3_GAMEPLAY_PLAN.md), [Phase 3 validation](PHASE3_VALIDATION.md) and [economy findings](ECONOMY_BALANCE_REPORT.md).
+
 ## P1 — public release remains conditional
 
 - [ ] Provision a deployment target, owned DNS name and scoped deployment credentials; run the protected release workflow against it.
@@ -46,7 +57,8 @@ Source implementation, executed tests and a live deployment are different milest
 
 - [ ] Repeat load tests against the final HTTPS topology with a separate generator and representative long-lived player data. Investigate state synchronization query/lock cost and authentication bursts before increasing limits.
 - [ ] Evaluate narrower state reads, production/config query reuse, cursor pagination and leaderboard repair cadence against measured workloads.
-- [ ] Revise the optimistic economic simulation for automatic queues and real session cadence; tune currency sinks, XP, order cadence and production duration.
+- [x] Replace optimistic progression assumptions with a seeded Phase 3A session model covering bounded queues, storage, real order rotation and voyage costs; preserve raw results and limitations.
+- [ ] Tune currency sinks, XP, order cadence, production duration and useful cargo differentiation. The new model exposes substantial coin inflation and unused large-hold capacity; it does not establish a mature economy.
 - [ ] Measure the tutorial with first-time players. Five minutes is a design goal, not a measured completion-time claim.
 - [ ] Profile physical mobile devices, browser audio restrictions, battery use and large-island rendering; headless Chromium coverage is insufficient for those claims.
 - [ ] Plan longer offline progress explicitly. Current queues are thirty prepaid batches, not eight hours of catch-up rewards.
@@ -54,7 +66,7 @@ Source implementation, executed tests and a live deployment are different milest
 ## P3 — deliberately deferred
 
 - Bilateral friend requests, invitations, social moderation and a fully navigable friend's Phaser island.
-- Resident needs, exploration, cooperative events, task chapters, character movement and richer weather/audio.
+- Resident needs, cooperative events, task chapters, character movement and richer weather/audio, following the Phase 3 order above.
 - WeChat Mini Game bridges and platform-specific publishing.
 - Multi-instance scaling: distributed rate limits, shared presence, Socket.IO Redis adapter, coordinated cache rebuilds and possibly a durable outbox.
 - Multi-region availability, season archives and a commercially balanced content roadmap.

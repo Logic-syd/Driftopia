@@ -67,6 +67,7 @@ export type Panel =
   | "ranking"
   | "settings"
   | "profile"
+  | "exploration"
   | null;
 export type Placement = {
   kind: BuildingKind | "floor";

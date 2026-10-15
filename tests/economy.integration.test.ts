@@ -612,6 +612,10 @@ describe.sequential("PostgreSQL economic consistency", () => {
     const p = await makePlayer();
     const initial = await state(p.id);
     const first = initial.orders.find((o) => o.name.includes("一杯水"))!;
+    const newlyUnlocked = await db.order.findMany({
+      where: { level: 2 },
+      select: { code: true },
+    });
     await db.playerProgress.update({
       where: { userId: p.id },
       data: { xp: 40 },
@@ -627,9 +631,13 @@ describe.sequential("PostgreSQL economic consistency", () => {
     const issued = await db.playerOrder.findMany({
       where: { userId: p.id, completedAt: null },
     });
-    expect(issued.some((o) => ["repair", "green"].includes(o.orderCode))).toBe(
-      true,
-    );
+    // The catalog now also includes alloy research at level two. The invariant
+    // is an unseen unlocked template, not either of two old hard-coded codes.
+    expect(
+      issued.some((o) =>
+        newlyUnlocked.some((template) => template.code === o.orderCode),
+      ),
+    ).toBe(true);
   });
   it("settles a bulk purchase with one rounded fee and retains unbought escrow", async () => {
     const seller = await makePlayer(),

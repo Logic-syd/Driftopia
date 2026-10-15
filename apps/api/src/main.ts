@@ -39,6 +39,7 @@ import {
   sessionUser,
 } from "./auth";
 import { Realtime, sessionHashFromCookie } from "./realtime";
+import { explorationAction, explorationState } from "./exploration";
 import {
   canReadMetrics,
   logger,
@@ -126,7 +127,7 @@ class Errors implements ExceptionFilter {
 @Controller("api")
 class ApiController {
   @Get("health") @SkipThrottle() health() {
-    return { ok: true, version: "0.3.0" };
+    return { ok: true, version: "0.4.0" };
   }
   @Get("ready") @SkipThrottle() async ready(
     @Res({ passthrough: true }) res: Response,
@@ -135,7 +136,7 @@ class ApiController {
       await db.$queryRaw`SELECT 1`;
       const migrations = await db.$queryRaw<
         { name: string }[]
-      >`SELECT name FROM "_driftopia_migrations" WHERE name = '202610130001_reliability'`;
+      >`SELECT name FROM "_driftopia_migrations" WHERE name = '202610150001_exploration'`;
       if (!migrations.length) throw new Error("Schema migration required");
       const cache = await redis
         .ping()
@@ -211,6 +212,21 @@ class ApiController {
   ) {
     const user = await sessionUser(req);
     const result = await gameAction(user.id, key(req), action, body);
+    realtime.notifyUsers([user.id]);
+    realtime.notifyLeaderboard();
+    return result;
+  }
+  @Get("exploration") async exploration(@Req() req: Request) {
+    const user = await sessionUser(req);
+    return explorationState(user.id);
+  }
+  @Post("exploration/:action") async explore(
+    @Req() req: Request,
+    @Param("action") action: string,
+    @Body() body: unknown,
+  ) {
+    const user = await sessionUser(req);
+    const result = await explorationAction(user.id, key(req), action, body);
     realtime.notifyUsers([user.id]);
     realtime.notifyLeaderboard();
     return result;
